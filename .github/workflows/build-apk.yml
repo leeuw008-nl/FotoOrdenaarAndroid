@@ -6,6 +6,7 @@ name: Build FotoOrdenaar APK
   push:
     branches:
       - main
+      - fix/gps-xmp-diagnostics
 
 jobs:
   build:
