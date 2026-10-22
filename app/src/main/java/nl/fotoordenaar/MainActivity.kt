@@ -178,7 +178,8 @@ class MainActivity : ComponentActivity() {
             val metadata = ImageMetadataReader.readMetadata(input)
             val gps = metadata.getFirstDirectoryOfType(GpsDirectory::class.java)?.geoLocation
             if (gps != null && gps.latitude.isFinite() && gps.longitude.isFinite() &&
-                gps.latitude in -90.0..90.0 && gps.longitude in -180.0..180.0
+                gps.latitude in -90.0..90.0 && gps.longitude in -180.0..180.0 &&
+                (gps.latitude != 0.0 || gps.longitude != 0.0)
             ) doubleArrayOf(gps.latitude, gps.longitude) else null
         }
     } catch (_: Exception) {
@@ -377,7 +378,8 @@ class MainActivity : ComponentActivity() {
                 exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF)
             )
             if (latitude != null && longitude != null &&
-                latitude in -90.0..90.0 && longitude in -180.0..180.0
+                latitude in -90.0..90.0 && longitude in -180.0..180.0 &&
+                (latitude != 0.0 || longitude != 0.0)
             ) {
                 return doubleArrayOf(latitude, longitude)
             }
@@ -388,7 +390,8 @@ class MainActivity : ComponentActivity() {
         return try {
             val result = FloatArray(2)
             if (exif.getLatLong(result) &&
-                result[0].isFinite() && result[1].isFinite()
+                result[0].isFinite() && result[1].isFinite() &&
+                (result[0] != 0f || result[1] != 0f)
             ) {
                 doubleArrayOf(result[0].toDouble(), result[1].toDouble())
             } else {
@@ -611,7 +614,7 @@ class MainActivity : ComponentActivity() {
                 val sample = plans.take(50).joinToString("\n") {
                     "${it.name}\n  → ${it.dateFolder}/" +
                         "${it.locationFolder}/${it.renamedName}\n  ${it.gpsText}" +
-                        (if (it.locationFolder == "Onbekende locatie") "\n  ${it.gpsDiagnostic}" else "") +
+                        "\n  ${it.gpsDiagnostic}" +
                         (it.issue?.let { e -> "\n  OVERGESLAGEN: $e" } ?: "")
                 }
                 status.text =
