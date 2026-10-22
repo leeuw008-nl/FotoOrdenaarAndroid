@@ -204,9 +204,61 @@ class MainActivity : ComponentActivity() {
 
     private fun gpsCoordinates(exif: ExifInterface?): DoubleArray? {
         if (exif == null) return null
+
+        // Lees eerst de ruwe GPS-tags. Sommige foto's bevatten geldige GPS-tags
+        // die getLatLong() niet correct teruggeeft.
+        fun rational(value: String?): Double? {
+            if (value.isNullOrBlank()) return null
+            val parts = value.trim().split("/")
+            return try {
+                if (parts.size == 2) {
+                    val numerator = parts[0].trim().toDouble()
+                    val denominator = parts[1].trim().toDouble()
+                    if (denominator == 0.0) null else numerator / denominator
+                } else {
+                    value.trim().toDouble()
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        fun coordinate(raw: String?, ref: String?): Double? {
+            if (raw.isNullOrBlank()) return null
+            val values = raw.split(",").mapNotNull { rational(it) }
+            if (values.size < 3) return null
+            var degrees = values[0] + values[1] / 60.0 + values[2] / 3600.0
+            when (ref?.trim()?.uppercase(Locale.US)) {
+                "S", "W" -> degrees = -degrees
+                "N", "E" -> Unit
+                else -> return null
+            }
+            return degrees
+        }
+
+        try {
+            val latitude = coordinate(
+                exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE),
+                exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE_REF)
+            )
+            val longitude = coordinate(
+                exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE),
+                exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF)
+            )
+            if (latitude != null && longitude != null &&
+                latitude in -90.0..90.0 && longitude in -180.0..180.0
+            ) {
+                return doubleArrayOf(latitude, longitude)
+            }
+        } catch (_: Exception) {
+            // Probeer hieronder de standaardmethode.
+        }
+
         return try {
             val result = FloatArray(2)
-            if (exif.getLatLong(result)) {
+            if (exif.getLatLong(result) &&
+                result[0].isFinite() && result[1].isFinite()
+            ) {
                 doubleArrayOf(result[0].toDouble(), result[1].toDouble())
             } else {
                 null
