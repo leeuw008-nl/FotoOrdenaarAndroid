@@ -366,23 +366,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun gpsDiagnostic(exif: ExifInterface?, coords: DoubleArray?): String {
-        if (exif == null) return "GPS-diagnose: EXIF kon niet worden gelezen"
-
+    private fun gpsDiagnostic(uri: Uri, exif: ExifInterface?, coords: DoubleArray?): String {
         fun short(tag: String): String =
-            exif.getAttribute(tag)?.take(70) ?: "(leeg)"
+            exif?.getAttribute(tag)?.take(70) ?: "(leeg)"
 
-        val raw = "lat=${short(ExifInterface.TAG_GPS_LATITUDE)}, " +
+        val raw = "EXIF lat=${short(ExifInterface.TAG_GPS_LATITUDE)}, " +
             "latRef=${short(ExifInterface.TAG_GPS_LATITUDE_REF)}, " +
             "lon=${short(ExifInterface.TAG_GPS_LONGITUDE)}, " +
             "lonRef=${short(ExifInterface.TAG_GPS_LONGITUDE_REF)}"
 
-        return if (coords == null) {
+        val xmpInfo = try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes == null) {
+                "XMP-diagnose: bestand kon niet worden geopend"
+            } else {
+                val xmp = String(bytes, Charsets.ISO_8859_1)
+                fun context(term: String): String {
+                    val index = xmp.indexOf(term, ignoreCase = true)
+                    if (index < 0) return "(niet aangetroffen)"
+                    val start = maxOf(0, index - 55)
+                    val end = minOf(xmp.length, index + 145)
+                    return xmp.substring(start, end).replace(Regex("\\s+"), " ").take(200)
+                }
+                "XMP-diagnose: bytes=${bytes.size}; GPSLatitude=${context("GPSLatitude")}; " +
+                    "GPSLongitude=${context("GPSLongitude")}; GPSPosition=${context("GPSPosition")}"
+            }
+        } catch (e: Exception) {
+            "XMP-diagnose: leesfout ${e.javaClass.simpleName}"
+        }
+
+        val result = if (coords == null) {
             "GPS-diagnose: coördinaten niet verwerkt; $raw"
         } else {
             "GPS-diagnose: coördinaten gelezen (${"%.5f".format(Locale.US, coords[0])}, " +
                 "${"%.5f".format(Locale.US, coords[1])}); $raw"
         }
+        return "$result\n$xmpInfo"
     }
 
     private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
@@ -535,7 +554,7 @@ class MainActivity : ComponentActivity() {
                 locationFolder = locationFolder(exif, coords),
                 renamedName = date?.let { renamedFileName(name, it) } ?: name,
                 gpsText = gpsText,
-                gpsDiagnostic = gpsDiagnostic(exif, coords),
+                gpsDiagnostic = gpsDiagnostic(uri, exif, coords),
                 issue = if (date == null) {
                     "Geen bruikbare EXIF-opnamedatum"
                 } else null
