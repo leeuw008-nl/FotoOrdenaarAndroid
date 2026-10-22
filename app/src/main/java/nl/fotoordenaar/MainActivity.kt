@@ -205,6 +205,42 @@ class MainActivity : ComponentActivity() {
         return stamp + ext
     }
 
+    private fun xmpGpsCoordinates(uri: Uri): DoubleArray? {
+        return try {
+            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                input.readBytes()
+            } ?: return null
+            // XMP is XML embedded in JPEG/HEIC metadata. Search only the common
+            // decimal-degree XMP fields; do not treat zero coordinates as a location.
+            val xmp = String(bytes, Charsets.ISO_8859_1)
+            fun field(name: String): String? {
+                val patterns = listOf(
+                    Regex("""(?:exif:)?$name\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                    Regex("""<[^>]*$name[^>]*>\s*([^<]+)\s*</[^>]+>""", RegexOption.IGNORE_CASE)
+                )
+                return patterns.firstNotNullOfOrNull { it.find(xmp)?.groupValues?.getOrNull(1)?.trim() }
+            }
+            fun decimal(value: String?): Double? {
+                if (value.isNullOrBlank()) return null
+                val cleaned = value.trim().replace(",", ".")
+                val match = Regex("""[-+]?[0-9]+(?:\.[0-9]+)?""").find(cleaned) ?: return null
+                return match.value.toDoubleOrNull()
+            }
+            var lat = decimal(field("GPSLatitude")) ?: return null
+            var lon = decimal(field("GPSLongitude")) ?: return null
+            val latRef = field("GPSLatitudeRef")
+            val lonRef = field("GPSLongitudeRef")
+            if (latRef.equals("S", true)) lat = -kotlin.math.abs(lat)
+            if (latRef.equals("N", true)) lat = kotlin.math.abs(lat)
+            if (lonRef.equals("W", true)) lon = -kotlin.math.abs(lon)
+            if (lonRef.equals("E", true)) lon = kotlin.math.abs(lon)
+            if (lat == 0.0 && lon == 0.0) return null
+            if (lat in -90.0..90.0 && lon in -180.0..180.0) doubleArrayOf(lat, lon) else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun gpsCoordinates(exif: ExifInterface?): DoubleArray? {
         if (exif == null) return null
 
@@ -290,8 +326,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun locationFolder(exif: ExifInterface?): String {
-        val coords = gpsCoordinates(exif) ?: return "Onbekende locatie"
+    private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
+        val coords = coordsOverride ?: gpsCoordinates(exif) ?: return "Onbekende locatie"
 
         return try {
             val geocoder = Geocoder(this, Locale("nl", "NL"))
@@ -425,7 +461,7 @@ class MainActivity : ComponentActivity() {
             val name = displayName(uri)
             val date = captureDate(exif)
             val day = dateFolder(date) ?: "DATUM_ONBEKEND"
-            val coords = gpsCoordinates(exif)
+            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif)
             val gpsText = if (coords == null) {
                 "GPS niet gevonden in EXIF"
             } else {
@@ -437,7 +473,7 @@ class MainActivity : ComponentActivity() {
                 source = uri,
                 name = name,
                 dateFolder = day,
-                locationFolder = locationFolder(exif),
+                locationFolder = locationFolder(exif, coords),
                 renamedName = date?.let { renamedFileName(name, it) } ?: name,
                 gpsText = gpsText,
                 gpsDiagnostic = gpsDiagnostic(exif, coords),
