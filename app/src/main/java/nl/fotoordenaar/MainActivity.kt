@@ -3,6 +3,8 @@ package nl.fotoordenaar
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.location.Address
 import android.location.Geocoder
 import android.net.Uri
@@ -10,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -17,6 +20,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.exif.GpsDirectory
@@ -34,6 +38,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private var sourceTree: Uri? = null
     private val worker = Executors.newSingleThreadExecutor()
+
+    private val requestMediaLocation =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                previewFiles()
+            } else {
+                status.text = "Toegang tot GPS-metadata is niet verleend. Android kan de locatiegegevens afschermen. Verleen de machtiging en probeer opnieuw."
+            }
+        }
 
     private val pickFolder =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -159,22 +172,65 @@ class MainActivity : ComponentActivity() {
         return "foto"
     }
 
-    // Prefer a seekable file descriptor; some document providers behave differently for streams.
-    private fun readExif(uri: Uri): ExifInterface? = try {
-        contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-            ExifInterface(pfd.fileDescriptor)
+    // SAF-URI's can expose a redacted image. Resolve the selected image to a unique
+    // MediaStore row where possible, then explicitly request its original bytes.
+    private fun originalMediaUri(uri: Uri): Uri {
+        if (Build.VERSION.SDK_INT < 29) return uri
+        if (uri.authority == MediaStore.AUTHORITY) {
+            return try { MediaStore.setRequireOriginal(uri) } catch (_: Exception) { uri }
         }
-    } catch (_: Exception) {
-        try {
-            contentResolver.openInputStream(uri)?.use { ExifInterface(it) }
+
+        val name = displayName(uri)
+        val size = try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getLong(0).takeIf { it >= 0L } else null
+            }
+        } catch (_: Exception) { null }
+
+        return try {
+            val matches = mutableListOf<Uri>()
+            contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.SIZE),
+                "${MediaStore.Images.Media.DISPLAY_NAME} = ?",
+                arrayOf(name),
+                null
+            )?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val sizeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+                while (c.moveToNext()) {
+                    if (size == null || c.getLong(sizeCol) == size) {
+                        matches += Uri.withAppendedPath(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            c.getLong(idCol).toString()
+                        )
+                    }
+                }
+            }
+            if (matches.size == 1) MediaStore.setRequireOriginal(matches[0]) else uri
         } catch (_: Exception) {
-            null
+            uri
+        }
+    }
+
+    private fun readExif(uri: Uri): ExifInterface? {
+        val original = originalMediaUri(uri)
+        return try {
+            contentResolver.openFileDescriptor(original, "r")?.use { pfd ->
+                ExifInterface(pfd.fileDescriptor)
+            }
+        } catch (_: Exception) {
+            try {
+                contentResolver.openInputStream(original)?.use { ExifInterface(it) }
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
     // Independent fallback parser: Drew Noakes metadata-extractor.
     private fun alternateGpsCoordinates(uri: Uri): DoubleArray? = try {
-        contentResolver.openInputStream(uri)?.use { input ->
+        contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
             val metadata = ImageMetadataReader.readMetadata(input)
             val gps = metadata.getFirstDirectoryOfType(GpsDirectory::class.java)?.geoLocation
             if (gps != null && gps.latitude.isFinite() && gps.longitude.isFinite() &&
@@ -241,7 +297,7 @@ class MainActivity : ComponentActivity() {
 
     private fun xmpGpsCoordinates(uri: Uri): DoubleArray? {
         return try {
-            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            val bytes = contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
                 val buffer = ByteArray(1024 * 1024)
                 val count = input.read(buffer)
                 if (count <= 0) ByteArray(0) else buffer.copyOf(count)
@@ -421,7 +477,7 @@ class MainActivity : ComponentActivity() {
             "lonRef=${short(ExifInterface.TAG_GPS_LONGITUDE_REF)}"
 
         val xmpInfo = try {
-            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            val bytes = contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
                 val buffer = ByteArray(1024 * 1024)
                 val count = input.read(buffer)
                 if (count <= 0) ByteArray(0) else buffer.copyOf(count)
@@ -615,6 +671,13 @@ class MainActivity : ComponentActivity() {
     private fun previewFiles() {
         if (sourceTree == null) {
             status.text = "Kies eerst een bronmap."
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
             return
         }
 
