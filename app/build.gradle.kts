@@ -30,4 +30,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("com.drewnoakes:metadata-extractor:2.19.0")
 }
