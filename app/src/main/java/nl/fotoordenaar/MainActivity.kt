@@ -241,8 +241,11 @@ class MainActivity : ComponentActivity() {
 
     private fun xmpGpsCoordinates(uri: Uri): DoubleArray? {
         return try {
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return null
+            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = ByteArray(1024 * 1024)
+                val count = input.read(buffer)
+                if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+            } ?: return null
             // XMP kan in JPEG's als XML/RDF zijn ingebed. Lees zowel de gangbare
             // velden als veelvoorkomende varianten met prefixen uit verschillende namespaces.
             // GPS-velden als GPSPosition en accepteer decimale graden én DMS-notatie.
@@ -341,14 +344,16 @@ class MainActivity : ComponentActivity() {
         // die getLatLong() niet correct teruggeeft.
         fun rational(value: String?): Double? {
             if (value.isNullOrBlank()) return null
-            val parts = value.trim().split("/")
+            // Accepteer zowel "52/1" als "52 / 1", plus losse decimale waarden.
+            val cleaned = value.trim().replace(Regex("\\s+"), "")
             return try {
-                if (parts.size == 2) {
-                    val numerator = parts[0].trim().toDouble()
-                    val denominator = parts[1].trim().toDouble()
+                val slash = cleaned.indexOf('/')
+                if (slash >= 0) {
+                    val numerator = cleaned.substring(0, slash).toDouble()
+                    val denominator = cleaned.substring(slash + 1).toDouble()
                     if (denominator == 0.0) null else numerator / denominator
                 } else {
-                    value.trim().toDouble()
+                    cleaned.toDouble()
                 }
             } catch (_: Exception) {
                 null
@@ -357,12 +362,16 @@ class MainActivity : ComponentActivity() {
 
         fun coordinate(raw: String?, ref: String?): Double? {
             if (raw.isNullOrBlank()) return null
-            val values = raw.split(",").mapNotNull { rational(it) }
+            val values = raw.split(',').mapNotNull { rational(it) }
             if (values.size < 3) return null
-            var degrees = values[0] + values[1] / 60.0 + values[2] / 3600.0
-            when (ref?.trim()?.uppercase(Locale.US)) {
-                "S", "W" -> degrees = -degrees
-                "N", "E" -> Unit
+            var degrees = kotlin.math.abs(values[0]) +
+                kotlin.math.abs(values[1]) / 60.0 +
+                kotlin.math.abs(values[2]) / 3600.0
+            // Sommige bestanden geven de Ref-tag met extra spaties of kleine letters.
+            // Als de Ref ontbreekt, laat getLatLong() hieronder nog een kans krijgen.
+            when (ref?.trim()?.firstOrNull()?.uppercaseChar()) {
+                'S', 'W' -> degrees = -degrees
+                'N', 'E' -> Unit
                 else -> return null
             }
             return degrees
@@ -412,7 +421,11 @@ class MainActivity : ComponentActivity() {
             "lonRef=${short(ExifInterface.TAG_GPS_LONGITUDE_REF)}"
 
         val xmpInfo = try {
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = ByteArray(1024 * 1024)
+                val count = input.read(buffer)
+                if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+            }
             if (bytes == null) {
                 "XMP-diagnose: bestand kon niet worden geopend"
             } else {
