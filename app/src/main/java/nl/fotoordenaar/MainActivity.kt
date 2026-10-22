@@ -476,6 +476,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun uriAccessDiagnostic(uri: Uri): String {
+        val original = originalMediaUri(uri)
+        val readPermission = when {
+            Build.VERSION.SDK_INT >= 33 ->
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+            Build.VERSION.SDK_INT >= 23 ->
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            else -> true
+        }
+        val locationPermission = Build.VERSION.SDK_INT < 29 ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val mapping = when {
+            uri.authority == MediaStore.AUTHORITY -> "bron is al MediaStore"
+            original != uri -> "unieke MediaStore-match gevonden"
+            else -> "geen unieke MediaStore-match; SAF-URI behouden"
+        }
+        return "Toegangsdiagnose: bron-authority=${uri.authority ?: "(leeg)"}; " +
+            "origineel-authority=${original.authority ?: "(leeg)"}; MediaStore-koppeling=${mapping}; " +
+            "leesmachtiging=${if (readPermission) "ja" else "nee"}; " +
+            "ACCESS_MEDIA_LOCATION=${if (locationPermission) "ja" else "nee"}"
+    }
+
     private fun gpsDiagnostic(uri: Uri, exif: ExifInterface?, coords: DoubleArray?): String {
         fun short(tag: String): String =
             exif?.getAttribute(tag)?.take(70) ?: "(leeg)"
@@ -515,7 +537,7 @@ class MainActivity : ComponentActivity() {
             "GPS-diagnose: coördinaten gelezen (${"%.5f".format(Locale.US, coords[0])}, " +
                 "${"%.5f".format(Locale.US, coords[1])}); $raw"
         }
-        return "$result\n$xmpInfo"
+        return "${uriAccessDiagnostic(uri)}\n$result\n$xmpInfo"
     }
 
     private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
