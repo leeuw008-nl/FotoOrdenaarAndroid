@@ -652,9 +652,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createFolder(parent: Uri, name: String): Uri {
+        // OpenDocumentTree returns a tree URI, but child folders returned by
+        // buildDocumentUriUsingTree are also tree-scoped URIs. Only convert the
+        // original tree root to a document URI; preserve child-folder URIs so
+        // nested folders are created inside the intended date folder.
         val actualParent =
-            if (DocumentsContract.isTreeUri(parent)) rootDocumentUri(parent)
-            else parent
+            if (parent.pathSegments.contains("document")) parent
+            else rootDocumentUri(parent)
 
         findChildFolder(actualParent, name)?.let { return it }
 
