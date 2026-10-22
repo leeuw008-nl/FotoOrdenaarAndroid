@@ -6,6 +6,9 @@ name: Build FotoOrdenaar APK
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
