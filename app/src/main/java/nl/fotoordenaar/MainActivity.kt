@@ -207,40 +207,98 @@ class MainActivity : ComponentActivity() {
 
     private fun xmpGpsCoordinates(uri: Uri): DoubleArray? {
         return try {
-            val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                input.readBytes()
-            } ?: return null
-            // XMP is XML embedded in JPEG/HEIC metadata. Search only the common
-            // decimal-degree XMP fields; do not treat zero coordinates as a location.
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return null
+            // XMP kan in JPEG's als XML/RDF zijn ingebed. Lees zowel de gangbare
+            // GPS-velden als GPSPosition en accepteer decimale graden én DMS-notatie.
             val xmp = String(bytes, Charsets.ISO_8859_1)
-            fun field(name: String): String? {
-                val patterns = listOf(
-                    Regex("""(?:exif:)?$name\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
-                    Regex("""<[^>]*$name[^>]*>\s*([^<]+)\s*</[^>]+>""", RegexOption.IGNORE_CASE)
-                )
-                return patterns.firstNotNullOfOrNull { it.find(xmp)?.groupValues?.getOrNull(1)?.trim() }
+
+            fun field(vararg names: String): String? {
+                for (name in names) {
+                    val escaped = Regex.escape(name)
+                    val patterns = listOf(
+                        Regex("""(?:[\w.-]+:)?$escaped\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                        Regex("""<(?:[\w.-]+:)?$escaped(?:\s[^>]*)?>\s*([^<]+)\s*</(?:[\w.-]+:)?$escaped\s*>""", RegexOption.IGNORE_CASE)
+                    )
+                    for (pattern in patterns) {
+                        val value = pattern.find(xmp)?.groupValues?.getOrNull(1)?.trim()
+                        if (!value.isNullOrBlank()) return value
+                    }
+                }
+                return null
             }
-            fun decimal(value: String?): Double? {
-                if (value.isNullOrBlank()) return null
-                val cleaned = value.trim().replace(",", ".")
-                val match = Regex("""[-+]?[0-9]+(?:\.[0-9]+)?""").find(cleaned) ?: return null
-                return match.value.toDoubleOrNull()
+
+            fun parseCoordinate(raw: String?, positive: Char, negative: Char): Double? {
+                if (raw.isNullOrBlank()) return null
+                val value = raw.trim()
+                val ref = value.lastOrNull()?.uppercaseChar()
+                val signFromRef = when (ref) {
+                    positive -> 1.0
+                    negative -> -1.0
+                    else -> 1.0
+                }
+                // XMP-exif schrijft coördinaten vaak als graden, minuten en optioneel
+                // seconden, bijvoorbeeld "52, 30.5N". Rationalen uit EXIF zijn ook geldig.
+                val numbers = Regex("""[-+]?\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?""")
+                    .findAll(value)
+                    .mapNotNull { token ->
+                        val parts = token.value.split("/")
+                        try {
+                            val numerator = parts[0].trim().toDouble()
+                            if (parts.size == 1) numerator
+                            else {
+                                val denominator = parts[1].trim().toDouble()
+                                if (denominator == 0.0) null else numerator / denominator
+                            }
+                        } catch (_: Exception) { null }
+                    }.toList()
+                if (numbers.isEmpty()) return null
+
+                val magnitude = when {
+                    numbers.size >= 3 -> kotlin.math.abs(numbers[0]) +
+                        kotlin.math.abs(numbers[1]) / 60.0 +
+                        kotlin.math.abs(numbers[2]) / 3600.0
+                    numbers.size == 2 && ref in listOf(positive, negative) ->
+                        kotlin.math.abs(numbers[0]) + kotlin.math.abs(numbers[1]) / 60.0
+                    else -> numbers[0]
+                }
+                val explicitNegative = value.startsWith("-")
+                return magnitude * if (explicitNegative) -1.0 else signFromRef
             }
-            var lat = decimal(field("GPSLatitude")) ?: return null
-            var lon = decimal(field("GPSLongitude")) ?: return null
-            val latRef = field("GPSLatitudeRef")
-            val lonRef = field("GPSLongitudeRef")
-            if (latRef.equals("S", true)) lat = -kotlin.math.abs(lat)
-            if (latRef.equals("N", true)) lat = kotlin.math.abs(lat)
-            if (lonRef.equals("W", true)) lon = -kotlin.math.abs(lon)
-            if (lonRef.equals("E", true)) lon = kotlin.math.abs(lon)
-            if (lat == 0.0 && lon == 0.0) return null
-            if (lat in -90.0..90.0 && lon in -180.0..180.0) doubleArrayOf(lat, lon) else null
+
+            var lat = parseCoordinate(field("GPSLatitude"), 'N', 'S')
+            var lon = parseCoordinate(field("GPSLongitude"), 'E', 'W')
+            val latRef = field("GPSLatitudeRef")?.trim()?.uppercase(Locale.US)
+            val lonRef = field("GPSLongitudeRef")?.trim()?.uppercase(Locale.US)
+            if (lat != null && latRef == "S") lat = -kotlin.math.abs(lat)
+            if (lat != null && latRef == "N") lat = kotlin.math.abs(lat)
+            if (lon != null && lonRef == "W") lon = -kotlin.math.abs(lon)
+            if (lon != null && lonRef == "E") lon = kotlin.math.abs(lon)
+
+            // Sommige camera's bewaren de positie als één tekstveld, bijvoorbeeld
+            // "52,30.5N 006,12.4E".
+            if (lat == null || lon == null) {
+                val position = field("GPSPosition", "GPSCoordinates")
+                if (!position.isNullOrBlank()) {
+                    val pair = Regex(
+                        """([-+]?\d+(?:\s*,\s*\d+(?:\.\d+)?){0,2}\s*[NS])\s*[,; ]+\s*([-+]?\d+(?:\s*,\s*\d+(?:\.\d+)?){0,2}\s*[EW])""",
+                        RegexOption.IGNORE_CASE
+                    ).find(position)
+                    if (pair != null) {
+                        lat = parseCoordinate(pair.groupValues[1], 'N', 'S')
+                        lon = parseCoordinate(pair.groupValues[2], 'E', 'W')
+                    }
+                }
+            }
+
+            if (lat != null && lon != null &&
+                (lat != 0.0 || lon != 0.0) &&
+                lat in -90.0..90.0 && lon in -180.0..180.0
+            ) doubleArrayOf(lat, lon) else null
         } catch (_: Exception) {
             null
         }
     }
-
     private fun gpsCoordinates(exif: ExifInterface?): DoubleArray? {
         if (exif == null) return null
 
