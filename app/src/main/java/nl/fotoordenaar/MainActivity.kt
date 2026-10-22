@@ -61,6 +61,8 @@ class MainActivity : ComponentActivity() {
             textSize = 15f
             text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
             setPadding(0, 24, 0, 24)
+            // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
+            setTextIsSelectable(true)
         }
 
         val scroll = ScrollView(this).apply {
