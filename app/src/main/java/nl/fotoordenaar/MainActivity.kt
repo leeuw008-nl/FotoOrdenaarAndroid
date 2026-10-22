@@ -196,19 +196,43 @@ class MainActivity : ComponentActivity() {
             }
         } catch (_: Exception) { null }
 
+        // Android's document picker commonly returns a SAF URI such as
+        // primary:DCIM/Camera/photo.jpg. Use that relative path to disambiguate
+        // duplicate filenames in MediaStore instead of relying on name alone.
+        val documentPath = try {
+            if (uri.authority == "com.android.externalstorage.documents") {
+                DocumentsContract.getDocumentId(uri)
+                    .substringAfter(':', "")
+                    .replace('\\', '/')
+                    .takeIf { it.isNotBlank() }
+            } else null
+        } catch (_: Exception) { null }
+        val relativePath = documentPath?.substringBeforeLast('/', "")
+            ?.let { if (it.isBlank()) "" else "$it/" }
+
         return try {
             val matches = mutableListOf<Uri>()
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.RELATIVE_PATH
+            )
             contentResolver.query(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.SIZE),
+                projection,
                 "${MediaStore.Images.Media.DISPLAY_NAME} = ?",
                 arrayOf(name),
                 null
             )?.use { c ->
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                 val sizeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+                val pathCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
                 while (c.moveToNext()) {
-                    if (size == null || c.getLong(sizeCol) == size) {
+                    val sizeMatches = size == null || c.getLong(sizeCol) == size
+                    val candidatePath = c.getString(pathCol)?.replace('\\', '/') ?: ""
+                    val pathMatches = relativePath == null ||
+                        candidatePath.trimEnd('/') == relativePath.trimEnd('/')
+                    if (sizeMatches && pathMatches) {
                         matches += Uri.withAppendedPath(
                             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                             c.getLong(idCol).toString()
