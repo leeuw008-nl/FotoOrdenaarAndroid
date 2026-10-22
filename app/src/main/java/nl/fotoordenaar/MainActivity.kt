@@ -39,6 +39,15 @@ class MainActivity : ComponentActivity() {
     private var sourceTree: Uri? = null
     private val worker = Executors.newSingleThreadExecutor()
 
+    private val requestReadImages =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            } else {
+                status.text = "Toegang tot de fotobibliotheek is niet verleend. De app kan daardoor de originele GPS-metadata mogelijk niet vinden."
+            }
+        }
+
     private val requestMediaLocation =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -671,6 +680,20 @@ class MainActivity : ComponentActivity() {
     private fun previewFiles() {
         if (sourceTree == null) {
             status.text = "Kies eerst een bronmap."
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29 && Build.VERSION.SDK_INT <= 32 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestReadImages.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
             return
         }
         if (Build.VERSION.SDK_INT >= 29 &&
