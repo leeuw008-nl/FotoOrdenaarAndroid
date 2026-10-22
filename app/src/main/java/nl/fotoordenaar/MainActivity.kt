@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
         val locationFolder: String,
         val renamedName: String,
         val gpsText: String,
+        val gpsDiagnostic: String,
         val issue: String? = null
     )
 
@@ -268,6 +269,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun gpsDiagnostic(exif: ExifInterface?, coords: DoubleArray?): String {
+        if (exif == null) return "GPS-diagnose: EXIF kon niet worden gelezen"
+
+        fun short(tag: String): String =
+            exif.getAttribute(tag)?.take(70) ?: "(leeg)"
+
+        val raw = "lat=${short(ExifInterface.TAG_GPS_LATITUDE)}, " +
+            "latRef=${short(ExifInterface.TAG_GPS_LATITUDE_REF)}, " +
+            "lon=${short(ExifInterface.TAG_GPS_LONGITUDE)}, " +
+            "lonRef=${short(ExifInterface.TAG_GPS_LONGITUDE_REF)}"
+
+        return if (coords == null) {
+            "GPS-diagnose: coördinaten niet verwerkt; $raw"
+        } else {
+            "GPS-diagnose: coördinaten gelezen (${"%.5f".format(Locale.US, coords[0])}, " +
+                "${"%.5f".format(Locale.US, coords[1])}); $raw"
+        }
+    }
+
     private fun locationFolder(exif: ExifInterface?): String {
         val coords = gpsCoordinates(exif) ?: return "Onbekende locatie"
 
@@ -418,6 +438,7 @@ class MainActivity : ComponentActivity() {
                 locationFolder = locationFolder(exif),
                 renamedName = date?.let { renamedFileName(name, it) } ?: name,
                 gpsText = gpsText,
+                gpsDiagnostic = gpsDiagnostic(exif, coords),
                 issue = if (date == null) {
                     "Geen bruikbare EXIF-opnamedatum"
                 } else null
@@ -441,6 +462,7 @@ class MainActivity : ComponentActivity() {
                 val sample = plans.take(50).joinToString("\n") {
                     "${it.name}\n  → ${it.dateFolder}/" +
                         "${it.locationFolder}/${it.renamedName}\n  ${it.gpsText}" +
+                        (if (it.locationFolder == "Onbekende locatie") "\n  ${it.gpsDiagnostic}" else "") +
                         (it.issue?.let { e -> "\n  OVERGESLAGEN: $e" } ?: "")
                 }
                 status.text =
