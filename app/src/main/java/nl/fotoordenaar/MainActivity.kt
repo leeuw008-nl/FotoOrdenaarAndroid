@@ -189,7 +189,8 @@ class MainActivity : ComponentActivity() {
         contentResolver.openInputStream(uri)?.use { input ->
             val metadata = ImageMetadataReader.readMetadata(input)
             metadata.getFirstDirectoryOfType(ExifSubIFDDirectory::class.java)?.dateOriginal
-                ?: metadata.getFirstDirectoryOfType(ExifIFD0Directory::class.java)?.dateTime
+                ?: metadata.getFirstDirectoryOfType(ExifIFD0Directory::class.java)
+                    ?.getDateTime(ExifIFD0Directory.TAG_DATETIME)
         }
     } catch (_: Exception) {
         null
