@@ -210,6 +210,7 @@ class MainActivity : ComponentActivity() {
             val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return null
             // XMP kan in JPEG's als XML/RDF zijn ingebed. Lees zowel de gangbare
+            // velden als veelvoorkomende varianten met prefixen uit verschillende namespaces.
             // GPS-velden als GPSPosition en accepteer decimale graden én DMS-notatie.
             val xmp = String(bytes, Charsets.ISO_8859_1)
 
