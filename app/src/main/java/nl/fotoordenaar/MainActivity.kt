@@ -18,6 +18,10 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.exifinterface.media.ExifInterface
+import com.drew.imaging.ImageMetadataReader
+import com.drew.metadata.exif.GpsDirectory
+import com.drew.metadata.exif.ExifSubIFDDirectory
+import com.drew.metadata.exif.ExifIFD0Directory
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -155,9 +159,37 @@ class MainActivity : ComponentActivity() {
         return "foto"
     }
 
+    // Prefer a seekable file descriptor; some document providers behave differently for streams.
     private fun readExif(uri: Uri): ExifInterface? = try {
-        contentResolver.openInputStream(uri)?.use {
-            ExifInterface(it)
+        contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            ExifInterface(pfd.fileDescriptor)
+        }
+    } catch (_: Exception) {
+        try {
+            contentResolver.openInputStream(uri)?.use { ExifInterface(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // Independent fallback parser: Drew Noakes metadata-extractor.
+    private fun alternateGpsCoordinates(uri: Uri): DoubleArray? = try {
+        contentResolver.openInputStream(uri)?.use { input ->
+            val metadata = ImageMetadataReader.readMetadata(input)
+            val gps = metadata.getFirstDirectoryOfType(GpsDirectory::class.java)?.geoLocation
+            if (gps != null && gps.latitude.isFinite() && gps.longitude.isFinite() &&
+                gps.latitude in -90.0..90.0 && gps.longitude in -180.0..180.0
+            ) doubleArrayOf(gps.latitude, gps.longitude) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun alternateCaptureDate(uri: Uri): Date? = try {
+        contentResolver.openInputStream(uri)?.use { input ->
+            val metadata = ImageMetadataReader.readMetadata(input)
+            metadata.getFirstDirectoryOfType(ExifSubIFDDirectory::class.java)?.dateOriginal
+                ?: metadata.getFirstDirectoryOfType(ExifIFD0Directory::class.java)?.dateTime
         }
     } catch (_: Exception) {
         null
@@ -537,9 +569,9 @@ class MainActivity : ComponentActivity() {
         for (uri in children(tree)) {
             val exif = readExif(uri)
             val name = displayName(uri)
-            val date = captureDate(exif)
+            val date = captureDate(exif) ?: alternateCaptureDate(uri)
             val day = dateFolder(date) ?: "DATUM_ONBEKEND"
-            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif)
+            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
             val gpsText = if (coords == null) {
                 "GPS niet gevonden in EXIF"
             } else {
