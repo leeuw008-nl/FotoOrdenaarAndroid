@@ -535,13 +535,30 @@ class MainActivity : ComponentActivity() {
             }
         }
         collect(folderUri, 0)
-        val scroll = ScrollView(this)
+        val density = resources.displayMetrics.density
+        val screenWidthPx = resources.displayMetrics.widthPixels
+        val screenWidthDp = (screenWidthPx / density).toInt()
+        val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val columns = when {
+            isLandscape && screenWidthDp >= 700 -> 6
+            isLandscape -> 5
+            screenWidthDp >= 600 -> 4
+            else -> 3
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            fillViewport = false
+        }
         val grid = GridLayout(this).apply {
-            columnCount = 3
+            columnCount = columns
             useDefaultMargins = false
             setPadding(4, 4, 4, 4)
+            alignmentMode = GridLayout.ALIGN_BOUNDS
         }
-        scroll.addView(grid)
+        scroll.addView(grid, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
         if (photos.isEmpty()) {
             grid.addView(TextView(this).apply {
                 text = "Geen foto's in deze map of onderliggende mappen gevonden."
@@ -549,18 +566,9 @@ class MainActivity : ComponentActivity() {
                 setPadding(12, 12, 12, 12)
             })
         } else {
-            val density = resources.displayMetrics.density
-            val screenWidthPx = resources.displayMetrics.widthPixels
-            // Drie grote kolommen op een telefoon in portretstand. Elk item krijgt
-            // een gelijk deel van de beschikbare breedte, zodat de grid niet links blijft hangen.
+            // Houd de kolommen compact in landscape; gebruik de volledige schermbreedte.
             val horizontalPaddingPx = (8 * density).toInt()
             val availableWidthPx = (screenWidthPx - horizontalPaddingPx).coerceAtLeast(1)
-            val columns = when {
-                screenWidthPx >= (900 * density).toInt() -> 5
-                screenWidthPx >= (650 * density).toInt() -> 4
-                else -> 3
-            }
-            grid.columnCount = columns
             val cellWidthPx = availableWidthPx / columns
             for (photo in photos) {
                 val tile = LinearLayout(this).apply {
@@ -568,9 +576,9 @@ class MainActivity : ComponentActivity() {
                     gravity = Gravity.CENTER
                     setPadding(2, 3, 2, 3)
                     layoutParams = GridLayout.LayoutParams().apply {
-                        width = 0
+                        width = cellWidthPx
                         height = ViewGroup.LayoutParams.WRAP_CONTENT
-                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED)
                     }
                 }
                 val thumb = ImageView(this).apply {
