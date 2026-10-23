@@ -7,7 +7,7 @@
         android:label="FotoOrdenaar"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
