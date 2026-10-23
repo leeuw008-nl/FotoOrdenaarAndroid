@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var previewButton: Button
     private lateinit var moveButton: Button
     private var sourceTree: Uri? = null
+    private var explorerOpen = false
     private var previewReady = false
     private var previewPlans: List<Plan>? = null
     private var moveRunning = false
@@ -98,6 +99,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sourceTree = savedInstanceState?.getString("sourceTree")?.let(Uri::parse)
+        explorerOpen = savedInstanceState?.getBoolean("explorerOpen") ?: false
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -151,12 +154,26 @@ class MainActivity : ComponentActivity() {
         })
 
         setContentView(root)
+        sourceTree?.let {
+            sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
+            status.text = "Eerder gekozen bronmap hersteld. Je kunt het resultaat opnieuw bekijken."
+        }
+        if (explorerOpen) {
+            root.post { showExplorer(organizedOnly = true) }
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        sourceTree?.let { outState.putString("sourceTree", it.toString()) }
+        outState.putBoolean("explorerOpen", explorerOpen)
+        super.onSaveInstanceState(outState)
     }
 
     private data class ExplorerEntry(
         val uri: Uri,
         val name: String,
-        val isDirectory: Boolean
+        val isDirectory: Boolean,
+        val sizeBytes: Long?
     )
 
     private fun explorerEntries(parent: Uri): List<ExplorerEntry> {
@@ -171,7 +188,8 @@ class MainActivity : ComponentActivity() {
             arrayOf(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE
             ),
             null, null,
             "${DocumentsContract.Document.COLUMN_DISPLAY_NAME} COLLATE NOCASE ASC"
@@ -179,6 +197,7 @@ class MainActivity : ComponentActivity() {
             val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
             val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
             while (cursor.moveToNext()) {
                 val childId = cursor.getString(idCol) ?: continue
                 val name = cursor.getString(nameCol) ?: "(naamloos)"
@@ -186,7 +205,8 @@ class MainActivity : ComponentActivity() {
                 entries += ExplorerEntry(
                     DocumentsContract.buildDocumentUriUsingTree(parentDoc, childId),
                     name,
-                    mime == DocumentsContract.Document.MIME_TYPE_DIR
+                    mime == DocumentsContract.Document.MIME_TYPE_DIR,
+                    if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null
                 )
             }
         }
@@ -240,8 +260,14 @@ class MainActivity : ComponentActivity() {
                     setPadding(depth * 22, 2, 4, 2)
                 }
                 val label = TextView(this).apply {
-                    textSize = 15f
-                    text = if (entry.isDirectory) "▸  📁  ${entry.name}" else "     📄  ${entry.name}"
+                    textSize = 14f
+                    text = if (entry.isDirectory) {
+                        "▸  📁  ${entry.name}"
+                    } else {
+                        val dimensions = imageDimensions(entry.uri)
+                        val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
+                        "     📄  ${entry.name}  —  ${dimensions ?: "afmetingen onbekend"}  —  $sizeText"
+                    }
                     setPadding(4, 9, 4, 9)
                 }
                 row.addView(label, LinearLayout.LayoutParams(
@@ -278,11 +304,34 @@ class MainActivity : ComponentActivity() {
             setPadding(8, 8, 8, 12)
         })
         addLevel(rootUri, content, 0, true)
-        AlertDialog.Builder(this)
+        explorerOpen = true
+        val dialog = AlertDialog.Builder(this)
             .setTitle(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap")
             .setView(scroll)
             .setPositiveButton("Sluiten", null)
-            .show()
+            .create()
+        dialog.setOnDismissListener {
+            if (!isChangingConfigurations) explorerOpen = false
+        }
+        dialog.show()
+    }
+
+    private fun formatFileSize(bytes: Long): String = when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
+        bytes < 1024L * 1024L * 1024L -> String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
+        else -> String.format(Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+    }
+
+    private fun imageDimensions(uri: Uri): String? = try {
+        contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            val exif = ExifInterface(pfd.fileDescriptor)
+            val width = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
+            val height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+            if (width > 0 && height > 0) "${width} × ${height} px" else null
+        }
+    } catch (_: Exception) {
+        null
     }
 
     private data class Plan(
