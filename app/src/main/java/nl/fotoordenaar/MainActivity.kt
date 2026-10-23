@@ -32,6 +32,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ImageView
 import android.widget.GridLayout
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -62,6 +64,8 @@ class MainActivity : ComponentActivity() {
     private var previewPlans: List<Plan>? = null
     private var moveRunning = false
     private val worker = Executors.newSingleThreadExecutor()
+    private var homeView: View? = null
+    private val screenStack = mutableListOf<View>()
 
     private val requestReadImages =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -157,6 +161,7 @@ class MainActivity : ComponentActivity() {
             setOnClickListener { showExplorer(organizedOnly = true) }
         })
 
+        homeView = root
         setContentView(root)
         sourceTree?.let {
             sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
@@ -242,32 +247,184 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openFullScreen(title: String, body: View, dark: Boolean = false) {
+        val current = if (screenStack.isEmpty()) homeView else screenStack.lastOrNull()
+        if (current != null && (screenStack.isEmpty() || current !== body)) {
+            if (screenStack.isEmpty() || screenStack.last() !== current) screenStack.add(current)
+        }
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(if (dark) Color.BLACK else Color.WHITE)
+        }
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(4, 2, 8, 2)
+            setBackgroundColor(if (dark) Color.BLACK else Color.rgb(235, 239, 243))
+        }
+        toolbar.addView(Button(this).apply {
+            text = "‹ Terug"
+            setOnClickListener { closeFullScreen() }
+        })
+        toolbar.addView(TextView(this).apply {
+            text = title
+            textSize = 17f
+            maxLines = 2
+            setPadding(8, 4, 4, 4)
+            setTextColor(if (dark) Color.WHITE else Color.BLACK)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        page.addView(toolbar, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        page.addView(body, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        screenStack.add(page)
+        setContentView(page)
+    }
+
+    private fun closeFullScreen() {
+        if (screenStack.isNotEmpty()) screenStack.removeAt(screenStack.lastIndex)
+        val previous = screenStack.lastOrNull() ?: homeView
+        if (previous != null) setContentView(previous)
+        if (screenStack.isEmpty()) explorerOpen = false
+    }
+
+    @Deprecated("Use system back navigation")
+    override fun onBackPressed() {
+        if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
+    }
+
     private fun showFullscreenPhoto(uri: Uri, name: String) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
         val image = ImageView(this).apply {
             setBackgroundColor(Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
-            loadSampledBitmap(uri, 2200)?.let { setImageBitmap(it) }
+            loadSampledBitmap(uri, 2600)?.let { setImageBitmap(it) }
         }
-        val holder = LinearLayout(this).apply {
+        root.addView(image, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        root.addView(TextView(this).apply {
+            text = name
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(8, 5, 8, 5)
+        })
+
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.rgb(235, 239, 243))
+        }
+        val details = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
-            addView(image, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            ))
-            addView(TextView(this@MainActivity).apply {
-                text = name
-                textSize = 13f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(8, 8, 8, 8)
-            })
+            setPadding(10, 8, 10, 8)
         }
-        AlertDialog.Builder(this)
-            .setTitle(name)
-            .setView(holder)
-            .setPositiveButton("Sluiten", null)
-            .show()
+        val metadataScroll = ScrollView(this).apply { addView(details) }
+        val metadataText = buildPhotoMetadata(uri, name)
+        details.addView(TextView(this).apply {
+            text = metadataText
+            textSize = 13f
+            setTextIsSelectable(true)
+            setTextColor(Color.BLACK)
+        })
+        val coords = try {
+            val exif = readExif(uri)
+            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+        } catch (_: Exception) { null }
+
+        val mapView = if (coords == null) {
+            TextView(this).apply {
+                text = "Deze foto bevat geen leesbare GPS-coördinaten. Er kan geen locatiespeld worden getoond."
+                textSize = 15f
+                setPadding(20, 20, 20, 20)
+            }
+        } else {
+            WebView(this).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                webViewClient = WebViewClient()
+                val lat = coords[0]
+                val lon = coords[1]
+                val delta = 0.008
+                val html = """
+                    <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0}</style></head>
+                    <body><iframe src="https://www.openstreetmap.org/export/embed.html?bbox=${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}&layer=mapnik&marker=${lat}%2C${lon}"></iframe></body></html>
+                """.trimIndent()
+                loadDataWithBaseURL("https://www.openstreetmap.org/", html, "text/html", "UTF-8", null)
+            }
+        }
+
+        val tabBody = FrameLayoutCompat.frame(this)
+        fun selectTab(map: Boolean) {
+            tabBody.removeAllViews()
+            tabBody.addView(if (map) mapView else metadataScroll, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            tabs.getChildAt(0).isSelected = !map
+            tabs.getChildAt(1).isSelected = map
+            (tabs.getChildAt(0) as Button).text = if (!map) "● Metadata" else "Metadata"
+            (tabs.getChildAt(1) as Button).text = if (map) "● Kaart" else "Kaart"
+        }
+        tabs.addView(Button(this).apply {
+            text = "Metadata"
+            setOnClickListener { selectTab(false) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        tabs.addView(Button(this).apply {
+            text = "Kaart"
+            setOnClickListener { selectTab(true) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(tabs)
+        root.addView(tabBody, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        selectTab(false)
+        openFullScreen(name, root, dark = true)
+    }
+
+    private fun buildPhotoMetadata(uri: Uri, name: String): String {
+        val out = StringBuilder()
+        out.append("Bestand: ").append(name).append("\n")
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE, OpenableColumns.DISPLAY_NAME),
+                null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                        out.append("Bestandsgrootte: ").append(formatFileSize(cursor.getLong(sizeIndex))).append("\n")
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val exif = ExifInterface(input)
+                val attrs = exif.attributes
+                if (attrs.isEmpty()) {
+                    out.append("\nGeen EXIF-metadata beschikbaar.\n")
+                } else {
+                    out.append("\nMetadata (EXIF)\n")
+                    attrs.toSortedMap().forEach { (key, value) ->
+                        out.append(key).append(": ").append(value).append("\n")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            out.append("\nEXIF-metadata kon niet worden gelezen: ").append(e.message ?: e.javaClass.simpleName)
+        }
+        try {
+            val exif = readExif(uri)
+            val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            if (coords != null) out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
+                .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
+        } catch (_: Exception) {}
+        return out.toString()
     }
 
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
@@ -288,8 +445,8 @@ class MainActivity : ComponentActivity() {
         val scroll = ScrollView(this)
         val grid = GridLayout(this).apply {
             columnCount = 3
-            useDefaultMargins = true
-            setPadding(6, 6, 6, 6)
+            useDefaultMargins = false
+            setPadding(4, 4, 4, 4)
         }
         scroll.addView(grid)
         if (photos.isEmpty()) {
@@ -299,17 +456,21 @@ class MainActivity : ComponentActivity() {
                 setPadding(12, 12, 12, 12)
             })
         } else {
-            val width = (resources.displayMetrics.widthPixels / resources.displayMetrics.density / 3).toInt()
+            val density = resources.displayMetrics.density
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            val columns = (screenWidthPx / density / 116f).toInt().coerceIn(2, 6)
+            grid.columnCount = columns
+            val cellWidthPx = (screenWidthPx - (8 * density).toInt()) / columns
             for (photo in photos) {
                 val tile = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    setPadding(3, 3, 3, 3)
+                    setPadding(2, 3, 2, 3)
+                    layoutParams = ViewGroup.LayoutParams(cellWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
                 }
                 val thumb = ImageView(this).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    val size = (width * resources.displayMetrics.density).toInt()
-                    layoutParams = LinearLayout.LayoutParams(size, size)
+                    layoutParams = LinearLayout.LayoutParams(cellWidthPx - (4 * density).toInt(), cellWidthPx - (4 * density).toInt())
                     loadSampledBitmap(photo.uri, 320)?.let { setImageBitmap(it) }
                     contentDescription = photo.name
                     setOnClickListener { showFullscreenPhoto(photo.uri, photo.name) }
@@ -324,11 +485,7 @@ class MainActivity : ComponentActivity() {
                 grid.addView(tile)
             }
         }
-        AlertDialog.Builder(this)
-            .setTitle("$folderName — ${photos.size} foto's")
-            .setView(scroll)
-            .setPositiveButton("Sluiten", null)
-            .show()
+        openFullScreen("$folderName — ${photos.size} foto's", scroll)
     }
 
     private fun showExplorer(organizedOnly: Boolean) {
@@ -342,9 +499,7 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(12, 8, 12, 8)
         }
-        val scroll = ScrollView(this).apply {
-            addView(content)
-        }
+        val scroll = ScrollView(this).apply { addView(content) }
 
         var expandedAll = false
         lateinit var treeContent: LinearLayout
@@ -368,8 +523,7 @@ class MainActivity : ComponentActivity() {
 
             if (visibleEntries.isEmpty()) {
                 target.addView(TextView(this).apply {
-                    text = if (rootLevel && organizedOnly) "Nog geen datum-/ordnermappen gevonden."
-                        else "(lege map)"
+                    text = if (rootLevel && organizedOnly) "Nog geen datum-/ordnermappen gevonden." else "(lege map)"
                     textSize = 12f
                     setPadding(depth * 24 + 24, 6, 8, 6)
                 })
@@ -382,22 +536,14 @@ class MainActivity : ComponentActivity() {
                 }
                 val label = TextView(this).apply {
                     textSize = 12.5f
-                    text = if (entry.isDirectory) {
-                        "▸  📁  ${entry.name}"
-                    } else {
+                    text = if (entry.isDirectory) "▸  📁  ${entry.name}" else {
                         val dimensions = imageDimensions(entry.uri)
                         val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
                         "     📄  ${entry.name}  —  ${dimensions ?: "afmetingen onbekend"}  —  $sizeText"
                     }
                     setPadding(4, 6, 4, 6)
                 }
-                row.addView(label, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ))
-                if (isImageEntry(entry)) {
-                    row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
-                }
+                row.addView(label, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 target.addView(row)
                 if (entry.isDirectory) {
                     val childrenView = LinearLayout(this).apply {
@@ -409,29 +555,25 @@ class MainActivity : ComponentActivity() {
                         addLevel(entry.uri, childrenView, depth + 1, false, true)
                         label.text = "▾  📂  ${entry.name}"
                     }
-                    row.setOnClickListener {
-                        showFolderGallery(entry.uri, entry.name)
-                    }
+                    row.setOnClickListener { showFolderGallery(entry.uri, entry.name) }
                     row.setOnLongClickListener {
                         if (childrenView.visibility == View.VISIBLE) {
                             childrenView.visibility = View.GONE
                             label.text = "▸  📁  ${entry.name}"
                         } else {
-                            if (childrenView.childCount == 0) {
-                                addLevel(entry.uri, childrenView, depth + 1, false)
-                            }
+                            if (childrenView.childCount == 0) addLevel(entry.uri, childrenView, depth + 1, false)
                             childrenView.visibility = View.VISIBLE
                             label.text = "▾  📂  ${entry.name}"
                         }
                         true
                     }
+                } else if (isImageEntry(entry)) {
+                    row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
                 }
             }
         }
 
-        val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val expandButton = Button(this).apply {
             text = "Alles uitklappen"
             setOnClickListener {
@@ -443,27 +585,16 @@ class MainActivity : ComponentActivity() {
         }
         controls.addView(expandButton)
         controls.addView(TextView(this).apply {
-            text = if (organizedOnly) "Tik op een map om deze afzonderlijk uit of in te klappen."
-                else "Tik op een map om deze afzonderlijk uit of in te klappen."
+            text = "Tik op een map voor de galerij; houd een map lang ingedrukt om de boom uit of in te klappen."
             textSize = 12.5f
             setPadding(8, 4, 8, 8)
         })
         content.addView(controls)
-        treeContent = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        treeContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         content.addView(treeContent)
         addLevel(rootUri, treeContent, 0, true)
         explorerOpen = true
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap")
-            .setView(scroll)
-            .setPositiveButton("Sluiten", null)
-            .create()
-        dialog.setOnDismissListener {
-            if (!isChangingConfigurations) explorerOpen = false
-        }
-        dialog.show()
+        openFullScreen(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap", scroll)
     }
 
     private fun formatFileSize(bytes: Long): String = when {
