@@ -14,6 +14,14 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.view.ViewGroup
+import android.graphics.Color
+import android.content.res.ColorStateList
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.view.View
+import android.widget.ProgressBar
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -36,7 +44,12 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
+    private lateinit var sourceButton: Button
+    private lateinit var previewButton: Button
+    private lateinit var moveButton: Button
     private var sourceTree: Uri? = null
+    private var previewReady = false
+    private var moveRunning = false
     private val worker = Executors.newSingleThreadExecutor()
 
     private val requestReadImages =
@@ -66,6 +79,12 @@ class MainActivity : ComponentActivity() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
+                sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
+                previewReady = false
+                previewButton.backgroundTintList = null
+                previewButton.text = "2. Voorbeeld bekijken"
+                moveButton.backgroundTintList = null
+                moveButton.text = "3. Foto's verplaatsen"
                 status.text = "Bronmap gekozen.\n\nKies eerst ‘Voorbeeld bekijken’."
             }
         }
@@ -101,20 +120,23 @@ class MainActivity : ComponentActivity() {
             )
         )
 
-        root.addView(Button(this).apply {
+        sourceButton = Button(this).apply {
             text = "1. Bronmap kiezen"
             setOnClickListener { pickFolder.launch(null) }
-        })
+        }
+        root.addView(sourceButton)
 
-        root.addView(Button(this).apply {
+        previewButton = Button(this).apply {
             text = "2. Voorbeeld bekijken"
             setOnClickListener { previewFiles() }
-        })
+        }
+        root.addView(previewButton)
 
-        root.addView(Button(this).apply {
+        moveButton = Button(this).apply {
             text = "3. Foto's verplaatsen"
             setOnClickListener { confirmAndRun() }
-        })
+        }
+        root.addView(moveButton)
 
         setContentView(root)
     }
@@ -750,6 +772,11 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        previewReady = false
+        previewButton.backgroundTintList = null
+        previewButton.text = "2. Voorbeeld bekijken — analyseren…"
+        moveButton.backgroundTintList = null
+        moveButton.text = "3. Foto's verplaatsen"
         status.text = "Foto's analyseren…"
         worker.execute {
             val plans = plan()
@@ -762,6 +789,9 @@ class MainActivity : ComponentActivity() {
                         "\n  ${it.gpsDiagnostic}" +
                         (it.issue?.let { e -> "\n  OVERGESLAGEN: $e" } ?: "")
                 }
+                previewReady = true
+                previewButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
+                previewButton.text = "2. Voorbeeld bekijken — gereed (${plans.size})"
                 status.text =
                     "Voorbeeld gereed\nTotaal: ${plans.size}" +
                     "\nMet datum: $ok" +
@@ -777,12 +807,33 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        val tree = sourceTree ?: return
+        val sourceName = try {
+            contentResolver.query(tree, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (_: Exception) { null } ?: "Geselecteerde bronmap"
+        val message = TextView(this).apply {
+            textSize = 16f
+            setPadding(48, 24, 48, 8)
+            text = SpannableString("Bronmap: $sourceName\\n\\nFoto's worden verplaatst naar Datummap/Locatiemap/Bestandsnaam. Maak eerst een reservekopie. Doorgaan?\\n\\nBronmap openen")
+            movementMethod = LinkMovementMethod.getInstance()
+            val s = text as SpannableString
+            val label = "Bronmap openen"
+            val start = s.indexOf(label)
+            if (start >= 0) s.setSpan(object : ClickableSpan() {
+                override fun onClick(widget: View) {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(tree, "vnd.android.document/directory").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    } catch (_: Exception) {
+                        status.text = "De bestandsbeheerder kan deze bronmaplink niet rechtstreeks openen. Bronmap: $sourceName"
+                    }
+                }
+            }, start, start + label.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
         AlertDialog.Builder(this)
             .setTitle("Foto's verplaatsen?")
-            .setMessage(
-                "Foto's worden verplaatst naar Datummap/Locatiemap/" +
-                    "Bestandsnaam. Maak eerst een reservekopie. Doorgaan?"
-            )
+            .setView(message)
             .setNegativeButton("Annuleren", null)
             .setPositiveButton("Verplaatsen") { _, _ -> moveFiles() }
             .show()
@@ -790,6 +841,9 @@ class MainActivity : ComponentActivity() {
 
     private fun moveFiles() {
         val tree = sourceTree ?: return
+        moveRunning = true
+        moveButton.backgroundTintList = null
+        moveButton.text = "3. Foto's verplaatsen — 0%"
         status.text = "Verwerken gestart… Laat de app open."
 
         worker.execute {
@@ -799,7 +853,7 @@ class MainActivity : ComponentActivity() {
             var errors = 0
             val log = StringBuilder()
 
-            for (p in plans) {
+            for ((index, p) in plans.withIndex()) {
                 if (p.issue != null) {
                     skipped++
                     log.append("Overgeslagen: ${p.name} — ${p.issue}\n")
