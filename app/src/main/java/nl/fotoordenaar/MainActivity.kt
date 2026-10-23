@@ -324,15 +324,25 @@ class MainActivity : ComponentActivity() {
         }
         val details = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(10, 8, 10, 8)
+            setPadding(12, 10, 12, 10)
+            setBackgroundColor(Color.WHITE)
         }
-        val metadataScroll = ScrollView(this).apply { addView(details) }
-        val metadataText = buildPhotoMetadata(uri, name)
+        val metadataScroll = ScrollView(this).apply {
+            setBackgroundColor(Color.WHITE)
+            isFillViewport = true
+            addView(details)
+        }
+        val metadataText = try {
+            buildPhotoMetadata(uri, name).ifBlank { "Voor deze foto zijn geen metadata gevonden." }
+        } catch (e: Exception) {
+            "Metadata uitlezen is mislukt: ${e.javaClass.simpleName}: ${e.message ?: "geen details"}"
+        }
         details.addView(TextView(this).apply {
             text = metadataText
-            textSize = 13f
+            textSize = 14f
             setTextIsSelectable(true)
             setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
         })
         val coords = try {
             val exif = readExif(uri)
@@ -341,15 +351,35 @@ class MainActivity : ComponentActivity() {
 
         val mapView = if (coords == null) {
             TextView(this).apply {
-                text = "Deze foto bevat geen leesbare GPS-coördinaten. Er kan geen locatiespeld worden getoond."
+                text = "Deze foto bevat geen leesbare GPS-coördinaten. Er kan geen locatiespeld worden getoond.\n\nControleer in Metadata of GPS-breedtegraad en GPS-lengtegraad aanwezig zijn."
                 textSize = 15f
+                setTextColor(Color.BLACK)
+                setBackgroundColor(Color.WHITE)
                 setPadding(20, 20, 20, 20)
             }
         } else {
             WebView(this).apply {
+                setBackgroundColor(Color.WHITE)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                webViewClient = WebViewClient()
+                settings.loadsImagesAutomatically = true
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedError(
+                        view: WebView,
+                        request: android.webkit.WebResourceRequest,
+                        error: android.webkit.WebResourceError
+                    ) {
+                        if (request.isForMainFrame) {
+                            view.loadDataWithBaseURL(
+                                null,
+                                "<html><body style='font-family:sans-serif;padding:20px;color:#222'>" +
+                                    "<h3>Kaart niet geladen</h3><p>Open internetverbinding en probeer opnieuw.</p>" +
+                                    "<p>GPS: ${coords[0]}, ${coords[1]}</p></body></html>",
+                                "text/html", "UTF-8", null
+                            )
+                        }
+                    }
+                }
                 val lat = coords[0]
                 val lon = coords[1]
                 val delta = 0.008
@@ -491,11 +521,15 @@ class MainActivity : ComponentActivity() {
         } else {
             val density = resources.displayMetrics.density
             val screenWidthPx = resources.displayMetrics.widthPixels
-            // Gebruik vrijwel de volledige schermbreedte: kleinere tegels maken
-            // meer kolommen mogelijk, ook in portretstand.
-            val availableWidthPx = (screenWidthPx - (8 * density).toInt()).coerceAtLeast(1)
-            val targetCellWidthPx = (92f * density).toInt().coerceAtLeast(1)
-            val columns = (availableWidthPx / targetCellWidthPx).coerceIn(2, 10)
+            // Drie grote kolommen op een telefoon in portretstand. Elk item krijgt
+            // een gelijk deel van de beschikbare breedte, zodat de grid niet links blijft hangen.
+            val horizontalPaddingPx = (8 * density).toInt()
+            val availableWidthPx = (screenWidthPx - horizontalPaddingPx).coerceAtLeast(1)
+            val columns = when {
+                screenWidthPx >= (900 * density).toInt() -> 5
+                screenWidthPx >= (650 * density).toInt() -> 4
+                else -> 3
+            }
             grid.columnCount = columns
             val cellWidthPx = availableWidthPx / columns
             for (photo in photos) {
@@ -503,12 +537,19 @@ class MainActivity : ComponentActivity() {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
                     setPadding(2, 3, 2, 3)
-                    layoutParams = ViewGroup.LayoutParams(cellWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    layoutParams = GridLayout.LayoutParams().apply {
+                        width = 0
+                        height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                    }
                 }
                 val thumb = ImageView(this).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(cellWidthPx - (4 * density).toInt(), cellWidthPx - (4 * density).toInt())
-                    loadSampledBitmap(photo.uri, 320)?.let { setImageBitmap(it) }
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        cellWidthPx - (8 * density).toInt()
+                    )
+                    loadSampledBitmap(photo.uri, 600)?.let { setImageBitmap(it) }
                     contentDescription = photo.name
                     setOnClickListener { showFullscreenPhoto(photo.uri, photo.name) }
                 }
