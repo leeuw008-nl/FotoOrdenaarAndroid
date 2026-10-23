@@ -15,6 +15,11 @@ import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.view.ViewGroup
 import android.graphics.Color
+import android.graphics.drawable.ClipDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.view.Gravity
 import android.content.res.ColorStateList
 import android.text.SpannableString
 import android.text.Spanned
@@ -712,11 +717,12 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
-    private fun plan(): List<Plan> {
+    private fun plan(onProgress: (Int) -> Unit = {}): List<Plan> {
         val tree = sourceTree ?: return emptyList()
         val plans = mutableListOf<Plan>()
+        val uris = children(tree)
 
-        for (uri in children(tree)) {
+        for ((index, uri) in uris.withIndex()) {
             val exif = readExif(uri)
             val name = displayName(uri)
             val date = captureDate(exif) ?: alternateCaptureDate(uri)
@@ -741,8 +747,23 @@ class MainActivity : ComponentActivity() {
                     "Geen bruikbare EXIF-opnamedatum"
                 } else null
             )
+            onProgress(if (uris.isEmpty()) 100 else ((index + 1) * 100 / uris.size))
         }
         return plans
+    }
+
+    private fun setButtonProgress(button: Button, percent: Int, completed: Boolean = false) {
+        val green = Color.rgb(200, 230, 201)
+        val base = GradientDrawable().apply {
+            setColor(Color.rgb(238, 238, 238))
+            cornerRadius = 18f
+        }
+        val fillColor = if (completed) green else Color.rgb(165, 214, 167)
+        val fill = ClipDrawable(ColorDrawable(fillColor), Gravity.START, ClipDrawable.HORIZONTAL).apply {
+            level = if (completed) 10000 else percent.coerceIn(0, 100) * 100
+        }
+        button.backgroundTintList = null
+        button.background = LayerDrawable(arrayOf(base, fill))
     }
 
     private fun previewFiles() {
@@ -773,13 +794,18 @@ class MainActivity : ComponentActivity() {
         }
 
         previewReady = false
-        previewButton.backgroundTintList = null
-        previewButton.text = "2. Voorbeeld bekijken — analyseren…"
-        moveButton.backgroundTintList = null
+        setButtonProgress(previewButton, 0)
+        previewButton.text = "FOTO'S ANALYSEREN — 0%"
+        setButtonProgress(moveButton, 0)
         moveButton.text = "3. Foto's verplaatsen"
         status.text = "Foto's analyseren…"
         worker.execute {
-            val plans = plan()
+            val plans = plan { percent ->
+                runOnUiThread {
+                    setButtonProgress(previewButton, percent)
+                    previewButton.text = "FOTO'S ANALYSEREN — $percent%"
+                }
+            }
             runOnUiThread {
                 val ok = plans.count { it.issue == null }
                 val bad = plans.size - ok
@@ -790,8 +816,8 @@ class MainActivity : ComponentActivity() {
                         (it.issue?.let { e -> "\n  OVERGESLAGEN: $e" } ?: "")
                 }
                 previewReady = true
-                previewButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
-                previewButton.text = "2. Voorbeeld bekijken — gereed (${plans.size})"
+                setButtonProgress(previewButton, 100, completed = true)
+                previewButton.text = "FOTO'S ANALYSEREN — GEREED (${plans.size})"
                 status.text =
                     "Voorbeeld gereed\nTotaal: ${plans.size}" +
                     "\nMet datum: $ok" +
@@ -842,7 +868,7 @@ class MainActivity : ComponentActivity() {
     private fun moveFiles() {
         val tree = sourceTree ?: return
         moveRunning = true
-        moveButton.backgroundTintList = null
+        setButtonProgress(moveButton, 0)
         moveButton.text = "3. Foto's verplaatsen — 0%"
         status.text = "Verwerken gestart… Laat de app open."
 
