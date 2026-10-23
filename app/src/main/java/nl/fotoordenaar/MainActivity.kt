@@ -145,7 +145,144 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(moveButton)
 
+        root.addView(Button(this).apply {
+            text = "Verkenner: resultaat bekijken"
+            setOnClickListener { showExplorer(organizedOnly = true) }
+        })
+
         setContentView(root)
+    }
+
+    private data class ExplorerEntry(
+        val uri: Uri,
+        val name: String,
+        val isDirectory: Boolean
+    )
+
+    private fun explorerEntries(parent: Uri): List<ExplorerEntry> {
+        val parentDoc = if (DocumentsContract.isTreeUri(parent) &&
+            !DocumentsContract.isDocumentUri(this, parent)
+        ) rootDocumentUri(parent) else parent
+        val id = DocumentsContract.getDocumentId(parentDoc)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parentDoc, id)
+        val entries = mutableListOf<ExplorerEntry>()
+        contentResolver.query(
+            childrenUri,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+            ),
+            null, null,
+            "${DocumentsContract.Document.COLUMN_DISPLAY_NAME} COLLATE NOCASE ASC"
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            while (cursor.moveToNext()) {
+                val childId = cursor.getString(idCol) ?: continue
+                val name = cursor.getString(nameCol) ?: "(naamloos)"
+                val mime = cursor.getString(mimeCol) ?: ""
+                entries += ExplorerEntry(
+                    DocumentsContract.buildDocumentUriUsingTree(parentDoc, childId),
+                    name,
+                    mime == DocumentsContract.Document.MIME_TYPE_DIR
+                )
+            }
+        }
+        return entries
+    }
+
+    private fun showExplorer(organizedOnly: Boolean) {
+        val tree = sourceTree
+        if (tree == null) {
+            status.text = "Kies eerst een bronmap."
+            return
+        }
+        val rootUri = rootDocumentUri(tree)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 8, 12, 8)
+        }
+        val scroll = ScrollView(this).apply {
+            addView(content)
+        }
+
+        fun addLevel(parent: Uri, target: LinearLayout, depth: Int, rootLevel: Boolean) {
+            val entries = try {
+                explorerEntries(parent)
+            } catch (e: Exception) {
+                target.addView(TextView(this).apply {
+                    text = "Mapinhoud kon niet worden gelezen: ${e.message ?: "onbekende fout"}"
+                    textSize = 13f
+                    setPadding(depth * 24, 8, 8, 8)
+                })
+                return
+            }
+            val visibleEntries = if (organizedOnly && rootLevel) {
+                entries.filter { it.isDirectory &&
+                    (it.name.matches(Regex("\\d{8}")) || it.name == "DATUM_ONBEKEND")
+                }
+            } else entries
+
+            if (visibleEntries.isEmpty()) {
+                target.addView(TextView(this).apply {
+                    text = if (rootLevel && organizedOnly) "Nog geen datum-/ordnermappen gevonden."
+                        else "(lege map)"
+                    textSize = 13f
+                    setPadding(depth * 24 + 24, 6, 8, 6)
+                })
+            }
+            for (entry in visibleEntries) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(depth * 22, 2, 4, 2)
+                }
+                val label = TextView(this).apply {
+                    textSize = 15f
+                    text = if (entry.isDirectory) "▸  📁  ${entry.name}" else "     📄  ${entry.name}"
+                    setPadding(4, 9, 4, 9)
+                }
+                row.addView(label, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
+                target.addView(row)
+                if (entry.isDirectory) {
+                    val childrenView = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        visibility = View.GONE
+                    }
+                    target.addView(childrenView)
+                    row.setOnClickListener {
+                        if (childrenView.visibility == View.VISIBLE) {
+                            childrenView.visibility = View.GONE
+                            label.text = "▸  📁  ${entry.name}"
+                        } else {
+                            if (childrenView.childCount == 0) {
+                                addLevel(entry.uri, childrenView, depth + 1, false)
+                            }
+                            childrenView.visibility = View.VISIBLE
+                            label.text = "▾  📂  ${entry.name}"
+                        }
+                    }
+                }
+            }
+        }
+
+        content.addView(TextView(this).apply {
+            text = if (organizedOnly) "Datumsmappen uitklappen om locatiemappen en foto's te bekijken."
+                else "Mappen uitklappen om onderliggende mappen en bestanden te bekijken."
+            textSize = 14f
+            setPadding(8, 8, 8, 12)
+        })
+        addLevel(rootUri, content, 0, true)
+        AlertDialog.Builder(this)
+            .setTitle(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap")
+            .setView(scroll)
+            .setPositiveButton("Sluiten", null)
+            .show()
     }
 
     private data class Plan(
