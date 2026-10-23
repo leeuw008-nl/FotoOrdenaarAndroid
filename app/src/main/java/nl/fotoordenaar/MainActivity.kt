@@ -32,6 +32,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ImageView
 import android.widget.GridLayout
+import android.widget.FrameLayout
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.graphics.Bitmap
@@ -361,7 +362,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val tabBody = FrameLayoutCompat.frame(this)
+        val tabBody = FrameLayout(this)
         fun selectTab(map: Boolean) {
             tabBody.removeAllViews()
             tabBody.addView(if (map) mapView else metadataScroll, ViewGroup.LayoutParams(
@@ -404,16 +405,18 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
         try {
             contentResolver.openInputStream(uri)?.use { input ->
-                val exif = ExifInterface(input)
-                val attrs = exif.attributes
-                if (attrs.isEmpty()) {
-                    out.append("\nGeen EXIF-metadata beschikbaar.\n")
-                } else {
-                    out.append("\nMetadata (EXIF)\n")
-                    attrs.toSortedMap().forEach { (key, value) ->
-                        out.append(key).append(": ").append(value).append("\n")
+                val metadata = ImageMetadataReader.readMetadata(input)
+                var found = false
+                out.append("\nMetadata\n")
+                for (directory in metadata.directories) {
+                    for (tag in directory.tags) {
+                        found = true
+                        out.append(directory.name).append(" — ")
+                            .append(tag.tagName).append(": ")
+                            .append(tag.description ?: "(leeg)").append("\n")
                     }
                 }
+                if (!found) out.append("Geen metadata beschikbaar.\n")
             }
         } catch (e: Exception) {
             out.append("\nEXIF-metadata kon niet worden gelezen: ").append(e.message ?: e.javaClass.simpleName)
