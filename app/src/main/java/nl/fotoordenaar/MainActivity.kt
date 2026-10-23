@@ -224,17 +224,22 @@ class MainActivity : ComponentActivity() {
             n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp"))
     }
 
-    private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? = try {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (bounds.outWidth / sample > maxDimension * 2 ||
-            bounds.outHeight / sample > maxDimension * 2) sample *= 2
-        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-    } catch (_: Exception) {
-        null
+    private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                null
+            } else {
+                var sample = 1
+                while (bounds.outWidth / sample > maxDimension * 2 ||
+                    bounds.outHeight / sample > maxDimension * 2) sample *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String) {
