@@ -679,8 +679,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createFolder(parent: Uri, name: String): Uri {
+        // A document URI created from a tree also contains "/tree/".
+        // Only convert the original tree URI to its root document; do not
+        // accidentally redirect nested location folders back to the album root.
         val actualParent =
-            if (DocumentsContract.isTreeUri(parent)) rootDocumentUri(parent)
+            if (DocumentsContract.isTreeUri(parent) &&
+                !DocumentsContract.isDocumentUri(this, parent)
+            ) rootDocumentUri(parent)
             else parent
 
         findChildFolder(actualParent, name)?.let { return it }
@@ -853,7 +858,7 @@ class MainActivity : ComponentActivity() {
             if (start >= 0) s.setSpan(object : ClickableSpan() {
                 override fun onClick(widget: View) {
                     try {
-                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(tree, "vnd.android.document/directory").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(rootDocumentUri(tree), "vnd.android.document/directory").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                     } catch (_: Exception) {
                         status.text = "De bestandsbeheerder kan deze bronmaplink niet rechtstreeks openen. Bronmap: $sourceName"
                     }
