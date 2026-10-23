@@ -547,7 +547,6 @@ class MainActivity : ComponentActivity() {
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = false
-            fillViewport = false
         }
         val grid = GridLayout(this).apply {
             columnCount = columns
