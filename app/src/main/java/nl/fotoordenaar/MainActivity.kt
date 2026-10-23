@@ -368,8 +368,9 @@ class MainActivity : ComponentActivity() {
         })
         val coords = cachedGpsCoordinates(name) ?: try {
             val exif = readExif(uri)
-            // Gebruik eerst de coördinaten die bij de eerdere fotoanalyse zijn opgeslagen.
-            xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            // Gebruik eerst opgeslagen coördinaten; probeer daarna de lichte EXIF-route
+            // en de metadata-bibliotheek vóór de volledige XMP-scan.
+            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
         } catch (_: Exception) { null }
 
         val mapView = if (coords == null) {
@@ -506,7 +507,7 @@ class MainActivity : ComponentActivity() {
         }
         try {
             val exif = readExif(uri)
-            val coords = cachedGpsCoordinates(name) ?: xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            val coords = cachedGpsCoordinates(name) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
             if (coords != null) {
                 out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
                     .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
@@ -1309,7 +1310,7 @@ class MainActivity : ComponentActivity() {
             val name = displayName(uri)
             val date = captureDate(exif) ?: alternateCaptureDate(uri)
             val day = dateFolder(date) ?: "DATUM_ONBEKEND"
-            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
             val gpsText = if (coords == null) {
                 "GPS niet gevonden in EXIF"
             } else {
