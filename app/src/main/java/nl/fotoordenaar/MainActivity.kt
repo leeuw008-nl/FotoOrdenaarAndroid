@@ -346,7 +346,9 @@ class MainActivity : ComponentActivity() {
         })
         val coords = try {
             val exif = readExif(uri)
-            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            // Use the same fallback order as the organizer: Samsung files may store
+            // location in XMP rather than standard EXIF GPS tags.
+            xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
         } catch (_: Exception) { null }
 
         val mapView = if (coords == null) {
@@ -483,10 +485,16 @@ class MainActivity : ComponentActivity() {
         }
         try {
             val exif = readExif(uri)
-            val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
-            if (coords != null) out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
-                .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
-        } catch (_: Exception) {}
+            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            if (coords != null) {
+                out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
+                    .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
+            } else {
+                out.append("\nGPS: geen coördinaten gevonden in XMP, EXIF of metadata-bibliotheek.\n")
+            }
+        } catch (e: Exception) {
+            out.append("\nGPS uitlezen mislukt: ").append(e.javaClass.simpleName).append("\n")
+        }
         return out.toString()
     }
 
@@ -905,9 +913,9 @@ class MainActivity : ComponentActivity() {
     private fun xmpGpsCoordinates(uri: Uri): DoubleArray? {
         return try {
             val bytes = contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
-                val buffer = ByteArray(1024 * 1024)
-                val count = input.read(buffer)
-                if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+                // Read the full JPEG/XMP packet; a single read() may return only
+                // a partial buffer and miss the GPS fields near the end.
+                input.readBytes()
             } ?: return null
             // XMP kan in JPEG's als XML/RDF zijn ingebed. Lees zowel de gangbare
             // velden als veelvoorkomende varianten met prefixen uit verschillende namespaces.
