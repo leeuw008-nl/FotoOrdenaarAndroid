@@ -333,7 +333,8 @@ class MainActivity : ComponentActivity() {
             addView(details)
         }
         val metadataText = try {
-            buildPhotoMetadata(uri, name).ifBlank { "Voor deze foto zijn geen metadata gevonden." }
+            val savedCoords = cachedGpsCoordinates(uri) ?: readGpsCoordinates(uri)?.also { rememberGpsCoordinates(uri, it) }
+            buildPhotoMetadata(uri, name, savedCoords).ifBlank { "Voor deze foto zijn geen metadata gevonden." }
         } catch (e: Exception) {
             "Metadata uitlezen is mislukt: ${e.javaClass.simpleName}: ${e.message ?: "geen details"}"
         }
@@ -344,12 +345,9 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.BLACK)
             setBackgroundColor(Color.WHITE)
         })
-        val coords = try {
-            val exif = readExif(uri)
-            // Use the same fallback order as the organizer: Samsung files may store
-            // location in XMP rather than standard EXIF GPS tags.
-            xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
-        } catch (_: Exception) { null }
+        val coords = cachedGpsCoordinates(uri) ?: readGpsCoordinates(uri)?.also {
+            rememberGpsCoordinates(uri, it)
+        }
 
         val mapView = if (coords == null) {
             TextView(this).apply {
@@ -419,7 +417,7 @@ class MainActivity : ComponentActivity() {
         openFullScreen(name, root, dark = true)
     }
 
-    private fun buildPhotoMetadata(uri: Uri, name: String): String {
+    private fun buildPhotoMetadata(uri: Uri, name: String, coordsOverride: DoubleArray? = null): String {
         val out = StringBuilder()
         out.append("Bestand: ").append(name).append("\n")
         try {
@@ -484,8 +482,7 @@ class MainActivity : ComponentActivity() {
             if (!metadataFound) out.append("Ook EXIF uitlezen is mislukt: ").append(e.message ?: e.javaClass.simpleName).append("\n")
         }
         try {
-            val exif = readExif(uri)
-            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            val coords = coordsOverride ?: cachedGpsCoordinates(uri) ?: readGpsCoordinates(uri)
             if (coords != null) {
                 out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
                     .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
@@ -826,6 +823,37 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
             uri
         }
+    }
+
+    private fun readGpsCoordinates(uri: Uri): DoubleArray? = try {
+        val exif = readExif(uri)
+        xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+    } catch (_: Exception) {
+        null
+    }
+
+    // Persist the coordinates by document URI so map and metadata reuse the
+    // coordinates already found by the organizer, including after reopening.
+    private fun gpsPreferences() = getSharedPreferences("photo_gps_cache", MODE_PRIVATE)
+
+    private fun cachedGpsCoordinates(uri: Uri): DoubleArray? {
+        val key = uri.toString()
+        val prefs = gpsPreferences()
+        val lat = prefs.getString("$key.lat", null)?.toDoubleOrNull() ?: return null
+        val lon = prefs.getString("$key.lon", null)?.toDoubleOrNull() ?: return null
+        return if (lat in -90.0..90.0 && lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
+            doubleArrayOf(lat, lon) else null
+    }
+
+    private fun rememberGpsCoordinates(uri: Uri, coords: DoubleArray) {
+        if (coords.size < 2 || !coords[0].isFinite() || !coords[1].isFinite()) return
+        if (coords[0] !in -90.0..90.0 || coords[1] !in -180.0..180.0 ||
+            (coords[0] == 0.0 && coords[1] == 0.0)) return
+        val key = uri.toString()
+        gpsPreferences().edit()
+            .putString("$key.lat", coords[0].toString())
+            .putString("$key.lon", coords[1].toString())
+            .apply()
     }
 
     private fun readExif(uri: Uri): ExifInterface? {
@@ -1295,6 +1323,7 @@ class MainActivity : ComponentActivity() {
                     "${"%.5f".format(Locale.US, coords[1])}"
             }
 
+            if (coords != null) rememberGpsCoordinates(uri, coords)
             plans += Plan(
                 source = uri,
                 name = name,
@@ -1479,6 +1508,10 @@ class MainActivity : ComponentActivity() {
                             output.flush()
                         }
                     }
+
+                    // Copy the coordinates used for the destination folder to the
+                    // destination document URI before deleting the source document.
+                    cachedGpsCoordinates(p.source)?.let { rememberGpsCoordinates(target, it) }
 
                     if (!DocumentsContract.deleteDocument(contentResolver, p.source)) {
                         throw IllegalStateException(
