@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
             loadSampledBitmap(uri, 2600)?.let { setImageBitmap(it) }
         }
         root.addView(image, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f
         ))
         root.addView(TextView(this).apply {
             text = name
@@ -383,7 +383,7 @@ class MainActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(tabs)
         root.addView(tabBody, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f
         ))
         selectTab(false)
         openFullScreen(name, root, dark = true)
@@ -403,23 +403,55 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } catch (_: Exception) {}
+        var metadataFound = false
         try {
             contentResolver.openInputStream(uri)?.use { input ->
                 val metadata = ImageMetadataReader.readMetadata(input)
-                var found = false
                 out.append("\nMetadata\n")
                 for (directory in metadata.directories) {
                     for (tag in directory.tags) {
-                        found = true
+                        metadataFound = true
                         out.append(directory.name).append(" — ")
                             .append(tag.tagName).append(": ")
                             .append(tag.description ?: "(leeg)").append("\n")
                     }
                 }
-                if (!found) out.append("Geen metadata beschikbaar.\n")
             }
         } catch (e: Exception) {
-            out.append("\nEXIF-metadata kon niet worden gelezen: ").append(e.message ?: e.javaClass.simpleName)
+            out.append("\nBibliotheekmetadata niet beschikbaar: ").append(e.message ?: e.javaClass.simpleName).append("\n")
+        }
+        // Toon ook altijd de belangrijkste EXIF-velden via Androids eigen decoder.
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val exif = ExifInterface(input)
+                val tags = listOf(
+                    ExifInterface.TAG_DATETIME_ORIGINAL to "Opnamedatum",
+                    ExifInterface.TAG_DATETIME to "Datum",
+                    ExifInterface.TAG_MAKE to "Cameramerk",
+                    ExifInterface.TAG_MODEL to "Cameramodel",
+                    ExifInterface.TAG_IMAGE_WIDTH to "Breedte",
+                    ExifInterface.TAG_IMAGE_LENGTH to "Hoogte",
+                    ExifInterface.TAG_F_NUMBER to "Diafragma",
+                    ExifInterface.TAG_EXPOSURE_TIME to "Belichtingstijd",
+                    ExifInterface.TAG_ISO_SPEED to "ISO",
+                    ExifInterface.TAG_FOCAL_LENGTH to "Brandpuntsafstand",
+                    ExifInterface.TAG_ORIENTATION to "Oriëntatie",
+                    ExifInterface.TAG_GPS_LATITUDE to "GPS-breedtegraad",
+                    ExifInterface.TAG_GPS_LONGITUDE to "GPS-lengtegraad"
+                )
+                var fallbackFound = false
+                out.append("\nBelangrijke fotogegevens\n")
+                for ((tag, label) in tags) {
+                    val value = exif.getAttribute(tag)
+                    if (!value.isNullOrBlank()) {
+                        fallbackFound = true
+                        out.append(label).append(": ").append(value).append("\n")
+                    }
+                }
+                if (!fallbackFound && !metadataFound) out.append("Geen uitleesbare EXIF-metadata gevonden.\n")
+            }
+        } catch (e: Exception) {
+            if (!metadataFound) out.append("Ook EXIF uitlezen is mislukt: ").append(e.message ?: e.javaClass.simpleName).append("\n")
         }
         try {
             val exif = readExif(uri)
@@ -461,9 +493,13 @@ class MainActivity : ComponentActivity() {
         } else {
             val density = resources.displayMetrics.density
             val screenWidthPx = resources.displayMetrics.widthPixels
-            val columns = (screenWidthPx / density / 116f).toInt().coerceIn(2, 6)
+            // Gebruik vrijwel de volledige schermbreedte: kleinere tegels maken
+            // meer kolommen mogelijk, ook in portretstand.
+            val availableWidthPx = (screenWidthPx - (8 * density).toInt()).coerceAtLeast(1)
+            val targetCellWidthPx = (76f * density).toInt().coerceAtLeast(1)
+            val columns = (availableWidthPx / targetCellWidthPx).coerceIn(3, 12)
             grid.columnCount = columns
-            val cellWidthPx = (screenWidthPx - (8 * density).toInt()) / columns
+            val cellWidthPx = availableWidthPx / columns
             for (photo in photos) {
                 val tile = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
