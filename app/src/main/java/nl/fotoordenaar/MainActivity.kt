@@ -753,17 +753,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setButtonProgress(button: Button, percent: Int, completed: Boolean = false) {
-        val green = Color.rgb(200, 230, 201)
         val base = GradientDrawable().apply {
             setColor(Color.rgb(238, 238, 238))
             cornerRadius = 18f
         }
-        val fillColor = if (completed) green else Color.rgb(165, 214, 167)
-        val fill = ClipDrawable(ColorDrawable(fillColor), Gravity.START, ClipDrawable.HORIZONTAL).apply {
-            level = if (completed) 10000 else percent.coerceIn(0, 100) * 100
+        val fill = ClipDrawable(ColorDrawable(Color.rgb(200, 230, 201)), Gravity.START, ClipDrawable.HORIZONTAL)
+        val layers = LayerDrawable(arrayOf(base, fill)).apply {
+            setId(0, android.R.id.background)
+            setId(1, android.R.id.progress)
         }
         button.backgroundTintList = null
-        button.background = LayerDrawable(arrayOf(base, fill))
+        button.background = layers
+        layers.findDrawableByLayerId(android.R.id.progress).level =
+            if (completed) 10000 else percent.coerceIn(0, 100) * 100
+        button.invalidate()
     }
 
     private fun previewFiles() {
@@ -795,7 +798,7 @@ class MainActivity : ComponentActivity() {
 
         previewReady = false
         setButtonProgress(previewButton, 0)
-        previewButton.text = "FOTO'S ANALYSEREN — 0%"
+        previewButton.text = "2. FOTO'S ANALYSEREN — 0%"
         setButtonProgress(moveButton, 0)
         moveButton.text = "3. Foto's verplaatsen"
         status.text = "Foto's analyseren…"
@@ -803,7 +806,7 @@ class MainActivity : ComponentActivity() {
             val plans = plan { percent ->
                 runOnUiThread {
                     setButtonProgress(previewButton, percent)
-                    previewButton.text = "FOTO'S ANALYSEREN — $percent%"
+                    previewButton.text = "2. FOTO'S ANALYSEREN — $percent%"
                 }
             }
             runOnUiThread {
@@ -817,7 +820,7 @@ class MainActivity : ComponentActivity() {
                 }
                 previewReady = true
                 setButtonProgress(previewButton, 100, completed = true)
-                previewButton.text = "FOTO'S ANALYSEREN — GEREED (${plans.size})"
+                previewButton.text = "2. FOTO'S ANALYSEREN — GEREED (${plans.size})"
                 status.text =
                     "Voorbeeld gereed\nTotaal: ${plans.size}" +
                     "\nMet datum: $ok" +
@@ -883,7 +886,6 @@ class MainActivity : ComponentActivity() {
                 if (p.issue != null) {
                     skipped++
                     log.append("Overgeslagen: ${p.name} — ${p.issue}\n")
-                    continue
                 }
 
                 var target: Uri? = null
@@ -932,9 +934,17 @@ class MainActivity : ComponentActivity() {
                     errors++
                     log.append("Fout: ${p.name} — ${e.message}\n")
                 }
+                val percent = if (plans.isEmpty()) 100 else ((index + 1) * 100 / plans.size)
+                runOnUiThread {
+                    setButtonProgress(moveButton, percent, completed = percent == 100)
+                    moveButton.text = "3. Foto's verplaatsen — ${percent}%"
+                    status.text = "Foto's verplaatsen: ${percent}%"
+                }
             }
 
             runOnUiThread {
+                setButtonProgress(moveButton, 100, completed = true)
+                moveButton.text = "3. Foto's verplaatsen — GEREED"
                 status.text =
                     "Klaar\nVerplaatst: $moved\nOvergeslagen: $skipped" +
                     "\nFouten: $errors\n\n${log.toString().take(5000)}"
