@@ -14,7 +14,6 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.view.ViewGroup
-import android.graphics.Color
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -31,6 +30,11 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.ImageView
+import android.widget.GridLayout
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -213,6 +217,115 @@ class MainActivity : ComponentActivity() {
         return entries
     }
 
+    private fun isImageEntry(entry: ExplorerEntry): Boolean {
+        val n = entry.name.lowercase(Locale.ROOT)
+        return !entry.isDirectory && (n.endsWith(".jpg") || n.endsWith(".jpeg") ||
+            n.endsWith(".png") || n.endsWith(".webp") || n.endsWith(".heic") ||
+            n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp"))
+    }
+
+    private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > maxDimension * 2 ||
+            bounds.outHeight / sample > maxDimension * 2) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun showFullscreenPhoto(uri: Uri, name: String) {
+        val image = ImageView(this).apply {
+            setBackgroundColor(Color.BLACK)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            loadSampledBitmap(uri, 2200)?.let { setImageBitmap(it) }
+        }
+        val holder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+            addView(image, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            ))
+            addView(TextView(this@MainActivity).apply {
+                text = name
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(8, 8, 8, 8)
+            })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(name)
+            .setView(holder)
+            .setPositiveButton("Sluiten", null)
+            .show()
+    }
+
+    private fun showFolderGallery(folderUri: Uri, folderName: String) {
+        val photos = mutableListOf<ExplorerEntry>()
+        val visited = HashSet<String>()
+        fun collect(parent: Uri, depth: Int) {
+            if (depth > 20 || photos.size >= 1500) return
+            val key = parent.toString()
+            if (!visited.add(key)) return
+            val entries = try { explorerEntries(parent) } catch (_: Exception) { emptyList() }
+            for (entry in entries) {
+                if (isImageEntry(entry)) photos.add(entry)
+                else if (entry.isDirectory) collect(entry.uri, depth + 1)
+                if (photos.size >= 1500) break
+            }
+        }
+        collect(folderUri, 0)
+        val scroll = ScrollView(this)
+        val grid = GridLayout(this).apply {
+            columnCount = 3
+            useDefaultMargins = true
+            setPadding(6, 6, 6, 6)
+        }
+        scroll.addView(grid)
+        if (photos.isEmpty()) {
+            grid.addView(TextView(this).apply {
+                text = "Geen foto's in deze map of onderliggende mappen gevonden."
+                textSize = 14f
+                setPadding(12, 12, 12, 12)
+            })
+        } else {
+            val width = (resources.displayMetrics.widthPixels / resources.displayMetrics.density / 3).toInt()
+            for (photo in photos) {
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(3, 3, 3, 3)
+                }
+                val thumb = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    val size = (width * resources.displayMetrics.density).toInt()
+                    layoutParams = LinearLayout.LayoutParams(size, size)
+                    loadSampledBitmap(photo.uri, 320)?.let { setImageBitmap(it) }
+                    contentDescription = photo.name
+                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name) }
+                }
+                tile.addView(thumb)
+                tile.addView(TextView(this).apply {
+                    text = photo.name
+                    textSize = 10f
+                    maxLines = 2
+                    setPadding(2, 2, 2, 4)
+                })
+                grid.addView(tile)
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("$folderName — ${photos.size} foto's")
+            .setView(scroll)
+            .setPositiveButton("Sluiten", null)
+            .show()
+    }
+
     private fun showExplorer(organizedOnly: Boolean) {
         val tree = sourceTree
         if (tree == null) {
@@ -277,6 +390,9 @@ class MainActivity : ComponentActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 ))
+                if (isImageEntry(entry)) {
+                    row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
+                }
                 target.addView(row)
                 if (entry.isDirectory) {
                     val childrenView = LinearLayout(this).apply {
@@ -289,6 +405,9 @@ class MainActivity : ComponentActivity() {
                         label.text = "▾  📂  ${entry.name}"
                     }
                     row.setOnClickListener {
+                        showFolderGallery(entry.uri, entry.name)
+                    }
+                    row.setOnLongClickListener {
                         if (childrenView.visibility == View.VISIBLE) {
                             childrenView.visibility = View.GONE
                             label.text = "▸  📁  ${entry.name}"
@@ -299,6 +418,7 @@ class MainActivity : ComponentActivity() {
                             childrenView.visibility = View.VISIBLE
                             label.text = "▾  📂  ${entry.name}"
                         }
+                        true
                     }
                 }
             }
