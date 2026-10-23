@@ -68,6 +68,28 @@ class MainActivity : ComponentActivity() {
     private var homeView: View? = null
     private val screenStack = mutableListOf<View>()
 
+    // Bewaar coördinaten die tijdens de fotoanalyse al betrouwbaar zijn bepaald.
+    // Daardoor hoeven Kaart en Metadata ze na verplaatsen niet opnieuw te decoderen.
+    private val gpsCache by lazy { getSharedPreferences("photo_gps_cache", MODE_PRIVATE) }
+
+    private fun cachedGpsCoordinates(name: String): DoubleArray? {
+        val raw = gpsCache.getString(name, null) ?: return null
+        val parts = raw.split(",")
+        if (parts.size != 2) return null
+        val lat = parts[0].toDoubleOrNull() ?: return null
+        val lon = parts[1].toDoubleOrNull() ?: return null
+        return if (lat in -90.0..90.0 && lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
+            doubleArrayOf(lat, lon) else null
+    }
+
+    private fun cacheGpsCoordinates(name: String, coords: DoubleArray?) {
+        if (coords == null || coords.size < 2) return
+        if (!coords[0].isFinite() || !coords[1].isFinite()) return
+        if (coords[0] !in -90.0..90.0 || coords[1] !in -180.0..180.0) return
+        if (coords[0] == 0.0 && coords[1] == 0.0) return
+        gpsCache.edit().putString(name, "${coords[0]},${coords[1]}").apply()
+    }
+
     private val requestReadImages =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -344,10 +366,9 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.BLACK)
             setBackgroundColor(Color.WHITE)
         })
-        val coords = try {
+        val coords = cachedGpsCoordinates(name) ?: try {
             val exif = readExif(uri)
-            // Use the same fallback order as the organizer: Samsung files may store
-            // location in XMP rather than standard EXIF GPS tags.
+            // Gebruik eerst de coördinaten die bij de eerdere fotoanalyse zijn opgeslagen.
             xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
         } catch (_: Exception) { null }
 
@@ -485,7 +506,7 @@ class MainActivity : ComponentActivity() {
         }
         try {
             val exif = readExif(uri)
-            val coords = xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
+            val coords = cachedGpsCoordinates(name) ?: xmpGpsCoordinates(uri) ?: gpsCoordinates(exif) ?: alternateGpsCoordinates(uri)
             if (coords != null) {
                 out.append("\nGPS-decimaal: ").append("%.6f".format(Locale.US, coords[0]))
                     .append(", ").append("%.6f".format(Locale.US, coords[1])).append("\n")
@@ -709,6 +730,7 @@ class MainActivity : ComponentActivity() {
         val renamedName: String,
         val gpsText: String,
         val gpsDiagnostic: String,
+        val coords: DoubleArray? = null,
         val issue: String? = null
     )
 
@@ -1303,6 +1325,7 @@ class MainActivity : ComponentActivity() {
                 renamedName = date?.let { renamedFileName(name, it) } ?: name,
                 gpsText = gpsText,
                 gpsDiagnostic = gpsDiagnostic(uri, exif, coords),
+                coords = coords,
                 issue = if (date == null) {
                     "Geen bruikbare EXIF-opnamedatum"
                 } else null
@@ -1485,6 +1508,10 @@ class MainActivity : ComponentActivity() {
                             "Kopie gemaakt, maar origineel niet verwijderd"
                         )
                     }
+                    // Bewaar dezelfde gevonden coördinaten onder de uiteindelijke bestandsnaam,
+                    // zodat Kaart en Metadata ze na verplaatsen rechtstreeks kunnen gebruiken.
+                    cacheGpsCoordinates(targetName, p.coords)
+                    cacheGpsCoordinates(p.name, p.coords)
                     moved++
                 } catch (e: Exception) {
                     try {
