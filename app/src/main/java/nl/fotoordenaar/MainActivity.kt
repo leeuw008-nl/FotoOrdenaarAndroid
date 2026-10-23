@@ -886,8 +886,7 @@ class MainActivity : ComponentActivity() {
                 if (p.issue != null) {
                     skipped++
                     log.append("Overgeslagen: ${p.name} — ${p.issue}\n")
-                }
-
+                } else {
                 var target: Uri? = null
                 try {
                     val day = createFolder(tree, p.dateFolder)
@@ -934,6 +933,7 @@ class MainActivity : ComponentActivity() {
                     errors++
                     log.append("Fout: ${p.name} — ${e.message}\n")
                 }
+                }
                 val percent = if (plans.isEmpty()) 100 else ((index + 1) * 100 / plans.size)
                 runOnUiThread {
                     setButtonProgress(moveButton, percent, completed = percent == 100)
@@ -949,11 +949,33 @@ class MainActivity : ComponentActivity() {
                     "Klaar\nVerplaatst: $moved\nOvergeslagen: $skipped" +
                     "\nFouten: $errors\n\n${log.toString().take(5000)}"
 
+                val albumMessage = TextView(this).apply {
+                    textSize = 16f
+                    setPadding(48, 24, 48, 8)
+                    val linkText = SpannableString(
+                        "Verplaatst: $moved\nOvergeslagen: $skipped\nFouten: $errors\n\nAlbum openen"
+                    )
+                    val label = "Album openen"
+                    val start = linkText.indexOf(label)
+                    if (start >= 0) linkText.setSpan(object : ClickableSpan() {
+                        override fun onClick(widget: View) {
+                            try {
+                                startActivity(
+                                    Intent(Intent.ACTION_VIEW)
+                                        .setDataAndType(tree, "vnd.android.document/directory")
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                )
+                            } catch (_: Exception) {
+                                status.text = "Albumlink kon niet rechtstreeks worden geopend. Open de gekozen bronmap in Bestanden."
+                            }
+                        }
+                    }, start, start + label.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    text = linkText
+                    movementMethod = LinkMovementMethod.getInstance()
+                }
                 AlertDialog.Builder(this)
                     .setTitle("FotoOrdenaar klaar")
-                    .setMessage(
-                        "Verplaatst: $moved\nOvergeslagen: $skipped\nFouten: $errors"
-                    )
+                    .setView(albumMessage)
                     .setPositiveButton("OK", null)
                     .show()
             }
