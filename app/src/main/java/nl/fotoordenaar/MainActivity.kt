@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var moveButton: Button
     private var sourceTree: Uri? = null
     private var previewReady = false
+    private var previewPlans: List<Plan>? = null
     private var moveRunning = false
     private val worker = Executors.newSingleThreadExecutor()
 
@@ -86,6 +87,7 @@ class MainActivity : ComponentActivity() {
                 )
                 sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
                 previewReady = false
+                previewPlans = null
                 previewButton.backgroundTintList = null
                 previewButton.text = "2. Voorbeeld bekijken"
                 moveButton.backgroundTintList = null
@@ -823,6 +825,7 @@ class MainActivity : ComponentActivity() {
                         "\n  ${it.gpsDiagnostic}" +
                         (it.issue?.let { e -> "\n  OVERGESLAGEN: $e" } ?: "")
                 }
+                previewPlans = plans
                 previewReady = true
                 setButtonProgress(previewButton, 100, completed = true)
                 previewButton.text = "2. FOTO'S ANALYSEREN — GEREED (${plans.size})"
@@ -881,7 +884,7 @@ class MainActivity : ComponentActivity() {
         status.text = "Verwerken gestart… Laat de app open."
 
         worker.execute {
-            val plans = plan()
+            val plans = previewPlans ?: plan()
             var moved = 0
             var skipped = 0
             var errors = 0
@@ -949,7 +952,7 @@ class MainActivity : ComponentActivity() {
 
             runOnUiThread {
                 setButtonProgress(moveButton, 100, completed = true)
-                moveButton.text = "3. Foto's verplaatsen — GEREED"
+                moveButton.text = "3. FOTO'S VERPLAATSEN — GEREED ($moved verplaatst, $skipped overgeslagen, $errors fouten)"
                 status.text =
                     "Klaar\nVerplaatst: $moved\nOvergeslagen: $skipped" +
                     "\nFouten: $errors\n\n${log.toString().take(5000)}"
@@ -967,7 +970,7 @@ class MainActivity : ComponentActivity() {
                             try {
                                 startActivity(
                                     Intent(Intent.ACTION_VIEW)
-                                        .setDataAndType(tree, "vnd.android.document/directory")
+                                        .setDataAndType(rootDocumentUri(tree), "vnd.android.document/directory")
                                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 )
                             } catch (_: Exception) {
