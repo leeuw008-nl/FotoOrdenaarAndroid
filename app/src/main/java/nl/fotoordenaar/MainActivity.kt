@@ -228,13 +228,16 @@ class MainActivity : ComponentActivity() {
             addView(content)
         }
 
-        fun addLevel(parent: Uri, target: LinearLayout, depth: Int, rootLevel: Boolean) {
+        var expandedAll = false
+        lateinit var treeContent: LinearLayout
+
+        fun addLevel(parent: Uri, target: LinearLayout, depth: Int, rootLevel: Boolean, expandAll: Boolean = false) {
             val entries = try {
                 explorerEntries(parent)
             } catch (e: Exception) {
                 target.addView(TextView(this).apply {
                     text = "Mapinhoud kon niet worden gelezen: ${e.message ?: "onbekende fout"}"
-                    textSize = 13f
+                    textSize = 12f
                     setPadding(depth * 24, 8, 8, 8)
                 })
                 return
@@ -249,7 +252,7 @@ class MainActivity : ComponentActivity() {
                 target.addView(TextView(this).apply {
                     text = if (rootLevel && organizedOnly) "Nog geen datum-/ordnermappen gevonden."
                         else "(lege map)"
-                    textSize = 13f
+                    textSize = 12f
                     setPadding(depth * 24 + 24, 6, 8, 6)
                 })
             }
@@ -278,9 +281,13 @@ class MainActivity : ComponentActivity() {
                 if (entry.isDirectory) {
                     val childrenView = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
-                        visibility = View.GONE
+                        visibility = if (expandAll) View.VISIBLE else View.GONE
                     }
                     target.addView(childrenView)
+                    if (expandAll) {
+                        addLevel(entry.uri, childrenView, depth + 1, false, true)
+                        label.text = "▾  📂  ${entry.name}"
+                    }
                     row.setOnClickListener {
                         if (childrenView.visibility == View.VISIBLE) {
                             childrenView.visibility = View.GONE
@@ -297,13 +304,31 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        content.addView(TextView(this).apply {
-            text = if (organizedOnly) "Datumsmappen uitklappen om locatiemappen en foto's te bekijken."
-                else "Mappen uitklappen om onderliggende mappen en bestanden te bekijken."
-            textSize = 14f
-            setPadding(8, 8, 8, 12)
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val expandButton = Button(this).apply {
+            text = "Alles uitklappen"
+            setOnClickListener {
+                expandedAll = !expandedAll
+                text = if (expandedAll) "Alles inklappen" else "Alles uitklappen"
+                treeContent.removeAllViews()
+                addLevel(rootUri, treeContent, 0, true, expandedAll)
+            }
+        }
+        controls.addView(expandButton)
+        controls.addView(TextView(this).apply {
+            text = if (organizedOnly) "Tik op een map om deze afzonderlijk uit of in te klappen."
+                else "Tik op een map om deze afzonderlijk uit of in te klappen."
+            textSize = 12.5f
+            setPadding(8, 4, 8, 8)
         })
-        addLevel(rootUri, content, 0, true)
+        content.addView(controls)
+        treeContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        content.addView(treeContent)
+        addLevel(rootUri, treeContent, 0, true)
         explorerOpen = true
         val dialog = AlertDialog.Builder(this)
             .setTitle(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap")
