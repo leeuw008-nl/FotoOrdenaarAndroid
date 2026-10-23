@@ -353,12 +353,10 @@ class MainActivity : ComponentActivity() {
                 val lat = coords[0]
                 val lon = coords[1]
                 val delta = 0.008
-                val html = """
-                    <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0}</style></head>
-                    <body><iframe src="https://www.openstreetmap.org/export/embed.html?bbox=${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}&layer=mapnik&marker=${lat}%2C${lon}"></iframe></body></html>
-                """.trimIndent()
-                loadDataWithBaseURL("https://www.openstreetmap.org/", html, "text/html", "UTF-8", null)
+                val mapUrl = "https://www.openstreetmap.org/export/embed.html?bbox=" +
+                    "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
+                    "&layer=mapnik&marker=${lat}%2C${lon}"
+                loadUrl(mapUrl)
             }
         }
 
@@ -405,7 +403,7 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
         var metadataFound = false
         try {
-            contentResolver.openInputStream(uri)?.use { input ->
+            contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
                 val metadata = ImageMetadataReader.readMetadata(input)
                 out.append("\nMetadata\n")
                 for (directory in metadata.directories) {
@@ -422,7 +420,7 @@ class MainActivity : ComponentActivity() {
         }
         // Toon ook altijd de belangrijkste EXIF-velden via Androids eigen decoder.
         try {
-            contentResolver.openInputStream(uri)?.use { input ->
+            contentResolver.openInputStream(originalMediaUri(uri))?.use { input ->
                 val exif = ExifInterface(input)
                 val tags = listOf(
                     ExifInterface.TAG_DATETIME_ORIGINAL to "Opnamedatum",
@@ -496,8 +494,8 @@ class MainActivity : ComponentActivity() {
             // Gebruik vrijwel de volledige schermbreedte: kleinere tegels maken
             // meer kolommen mogelijk, ook in portretstand.
             val availableWidthPx = (screenWidthPx - (8 * density).toInt()).coerceAtLeast(1)
-            val targetCellWidthPx = (76f * density).toInt().coerceAtLeast(1)
-            val columns = (availableWidthPx / targetCellWidthPx).coerceIn(3, 12)
+            val targetCellWidthPx = (92f * density).toInt().coerceAtLeast(1)
+            val columns = (availableWidthPx / targetCellWidthPx).coerceIn(2, 10)
             grid.columnCount = columns
             val cellWidthPx = availableWidthPx / columns
             for (photo in photos) {
