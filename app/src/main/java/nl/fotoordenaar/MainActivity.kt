@@ -109,11 +109,11 @@ class MainActivity : ComponentActivity() {
 
         root.addView(TextView(this).apply {
             text = "FotoOrdenaar"
-            textSize = 26f
+            textSize = 23f
         })
 
         status = TextView(this).apply {
-            textSize = 15f
+            textSize = 14f
             text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
             setPadding(0, 24, 0, 24)
             // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
@@ -260,7 +260,7 @@ class MainActivity : ComponentActivity() {
                     setPadding(depth * 22, 2, 4, 2)
                 }
                 val label = TextView(this).apply {
-                    textSize = 14f
+                    textSize = 12.5f
                     text = if (entry.isDirectory) {
                         "▸  📁  ${entry.name}"
                     } else {
@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
                         val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
                         "     📄  ${entry.name}  —  ${dimensions ?: "afmetingen onbekend"}  —  $sizeText"
                     }
-                    setPadding(4, 9, 4, 9)
+                    setPadding(4, 6, 4, 6)
                 }
                 row.addView(label, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
