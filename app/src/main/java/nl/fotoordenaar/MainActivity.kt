@@ -584,6 +584,7 @@ class MainActivity : ComponentActivity() {
         if (loading.parent == null) return@runOnUiThread
         renderPhotoGrid(photos, loading)
         }
+        }
     }
 
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
