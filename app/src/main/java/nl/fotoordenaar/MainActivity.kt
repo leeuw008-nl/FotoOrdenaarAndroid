@@ -790,17 +790,15 @@ class MainActivity : ComponentActivity() {
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
                     val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
-                    val fileType = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
-                        .ifBlank { "bestand" }
                     label.text = if (isImageEntry(entry))
-                        "🖼  ${entry.name}  —  $fileType  —  $sizeText  —  afmetingen laden…  ›"
-                    else "📄  ${entry.name}  —  $fileType  —  $sizeText"
+                        "🖼  ${entry.name}  —  $sizeText  —  afmetingen laden…  ›"
+                    else "📄  ${entry.name}  —  $sizeText"
                     if (isImageEntry(entry)) {
                         worker.execute {
                             val dimensions = imageDimensions(entry.uri) ?: "afmetingen onbekend"
                             runOnUiThread {
                                 if (label.parent != null) label.text =
-                                    "🖼  ${entry.name}  —  $fileType  —  $sizeText  —  $dimensions  ›"
+                                    "🖼  ${entry.name}  —  $sizeText  —  $dimensions  ›"
                             }
                         }
                         label.setOnClickListener {
