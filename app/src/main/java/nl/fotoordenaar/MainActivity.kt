@@ -432,11 +432,14 @@ class MainActivity : ComponentActivity() {
             val bitmap = try { loadSampledBitmap(uri, 2600) } catch (_: Exception) { null }
             runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
         }
+        // Zelfde GPS-route als de werkende FotoOrdenaar: locatie bepalen
+        // voordat de kaartweergave wordt geopend.
+        val coords = cachedGpsCoordinates(name) ?: try {
+            val exif = readExif(uri)
+            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
+        } catch (_: Exception) { null }
+        showMap(coords)
         photoWorker.execute {
-            val coords = cachedGpsCoordinates(name) ?: try {
-                gpsCoordinates(readExif(uri)) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
-            } catch (_: Exception) { null }
-            runOnUiThread { if (!isFinishing) showMap(coords) }
             val metadata = try {
                 buildPhotoMetadata(uri, name).ifBlank { "Geen metadata gevonden." }
             } catch (e: Exception) { "Metadata uitlezen mislukt: ${e.message}" }
