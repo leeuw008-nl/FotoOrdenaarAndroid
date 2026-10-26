@@ -340,7 +340,7 @@ class MainActivity : ComponentActivity() {
         if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
     }
 
-    private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false) {
+    private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -362,7 +362,7 @@ class MainActivity : ComponentActivity() {
                         val next = (position + if (event.x - touchX < 0) 1 else -1).coerceIn(0, album.lastIndex)
                         if (kotlin.math.abs(event.x - touchX) > 75 * resources.displayMetrics.density && next != position) {
                             closeFullScreen()
-                            showFullscreenPhoto(album[next].uri, album[next].name, album, next, startPhotoOnly = photoOnlyState)
+                            showFullscreenPhoto(album[next].uri, album[next].name, album, next, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
                         }
                         true
                     }
@@ -380,7 +380,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position > 0
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1, startPhotoOnly = photoOnlyState)
+                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             navigation.addView(TextView(this).apply {
@@ -393,7 +393,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position < album.lastIndex
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1, startPhotoOnly = photoOnlyState)
+                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             root.addView(navigation)
@@ -542,6 +542,12 @@ class MainActivity : ComponentActivity() {
             setPhotoToolbarOverlay(photoOnlyState)
         }
         galleryButton.setOnClickListener {
+            if (fromGallery) {
+                // De bestaande Gallery is nog aanwezig op de navigatiestapel.
+                // Keer ernaar terug in plaats van een tweede grid met dezelfde foto's te maken.
+                closeFullScreen()
+                return@setOnClickListener
+            }
             val photos = album ?: listOf(ExplorerEntry(uri, name, false, null))
             val loading = TextView(this).apply {
                 text = "Gallery laden…"
@@ -745,7 +751,7 @@ class MainActivity : ComponentActivity() {
                         cellWidthPx - (8 * density).toInt()
                     )
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo)) }
+                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo), fromGallery = true) }
                 }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
