@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     // Foto- en metadataweergave mag niet wachten op het indexeren van albums.
     private val photoWorker = Executors.newFixedThreadPool(2)
+    private val viewerWorker = Executors.newFixedThreadPool(2)
     private val dimensionWorker = Executors.newSingleThreadExecutor()
     private var homeView: View? = null
     private val screenStack = mutableListOf<View>()
@@ -349,6 +350,7 @@ class MainActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
             setImageDrawable(null)
+            contentDescription = "Foto laden…"
         }
         if (album != null && album.size > 1) {
             var touchX = 0f
@@ -569,9 +571,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        photoWorker.execute {
+        viewerWorker.execute {
             val bitmap = try { loadSampledBitmap(uri, 2600) } catch (_: Exception) { null }
-            runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
+            runOnUiThread {
+                if (!isFinishing && image.parent != null) {
+                    image.setImageBitmap(bitmap)
+                    image.contentDescription = if (bitmap == null) "Foto kon niet worden geladen" else name
+                }
+            }
         }
         photoWorker.execute {
             val metadata = try {
