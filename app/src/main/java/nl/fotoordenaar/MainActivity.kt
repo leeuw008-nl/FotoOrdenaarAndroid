@@ -112,87 +112,47 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 sourceTree = uri
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
-                previewReady = false
-                previewPlans = null
-                previewButton.backgroundTintList = null
-                previewButton.text = "2. Voorbeeld bekijken"
-                moveButton.backgroundTintList = null
-                moveButton.text = "3. Foto's verplaatsen"
-                status.text = "Bronmap gekozen.\n\nKies eerst ‘Voorbeeld bekijken’."
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {}
+                status.text = "Fotomap geselecteerd. Tik op Verkenner openen."
+                showExplorer(organizedOnly = false)
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sourceTree = savedInstanceState?.getString("sourceTree")?.let(Uri::parse)
-        explorerOpen = savedInstanceState?.getBoolean("explorerOpen") ?: false
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(36, 36, 36, 24)
+            setPadding(20, 24, 20, 20)
         }
-
         root.addView(TextView(this).apply {
-            text = "FotoOrdenaar"
-            textSize = 23f
+            text = "Foto-verkenner"
+            textSize = 24f
         })
-
         status = TextView(this).apply {
-            textSize = 14f
-            text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
-            setPadding(0, 24, 0, 24)
-            // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
-            setTextIsSelectable(true)
+            text = "Kies een fotomap om albums, galerij, metadata en kaart te bekijken."
+            textSize = 15f
+            setPadding(4, 20, 4, 20)
         }
-
-        val scroll = ScrollView(this).apply {
-            addView(status)
-        }
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-        )
-
+        root.addView(status)
         sourceButton = Button(this).apply {
-            text = "1. Bronmap kiezen"
+            text = "Fotomap kiezen"
             setOnClickListener { pickFolder.launch(null) }
         }
         root.addView(sourceButton)
-
-        previewButton = Button(this).apply {
-            text = "2. Voorbeeld bekijken"
-            setOnClickListener { previewFiles() }
-        }
-        root.addView(previewButton)
-
-        moveButton = Button(this).apply {
-            text = "3. Foto's verplaatsen"
-            setOnClickListener { confirmAndRun() }
-        }
-        root.addView(moveButton)
-
+        previewButton = Button(this)
+        moveButton = Button(this)
         root.addView(Button(this).apply {
-            text = "Verkenner: resultaat bekijken"
-            setOnClickListener { showExplorer(organizedOnly = true) }
+            text = "Verkenner openen"
+            setOnClickListener { showExplorer(organizedOnly = false) }
         })
-
         homeView = root
         setContentView(root)
-        sourceTree?.let {
-            sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
-            status.text = "Eerder gekozen bronmap hersteld. Je kunt het resultaat opnieuw bekijken."
-        }
-        if (explorerOpen) {
-            root.post { showExplorer(organizedOnly = true) }
-        }
+        sourceTree?.let { status.text = "Fotomap geselecteerd. Tik op Verkenner openen." }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -523,18 +483,17 @@ class MainActivity : ComponentActivity() {
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
         val photos = mutableListOf<ExplorerEntry>()
         val visited = HashSet<String>()
-        fun collect(parent: Uri, depth: Int) {
-            if (depth > 20 || photos.size >= 1500) return
-            val key = parent.toString()
-            if (!visited.add(key)) return
+        val pending = java.util.ArrayDeque<Uri>()
+        pending.add(folderUri)
+        while (!pending.isEmpty()) {
+            val parent = pending.removeLast()
+            if (!visited.add(parent.toString())) continue
             val entries = try { explorerEntries(parent) } catch (_: Exception) { emptyList() }
             for (entry in entries) {
                 if (isImageEntry(entry)) photos.add(entry)
-                else if (entry.isDirectory) collect(entry.uri, depth + 1)
-                if (photos.size >= 1500) break
+                else if (entry.isDirectory) pending.add(entry.uri)
             }
         }
-        collect(folderUri, 0)
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
         val screenWidthDp = (screenWidthPx / density).toInt()
@@ -604,112 +563,131 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showExplorer(organizedOnly: Boolean) {
-        val tree = sourceTree
-        if (tree == null) {
-            status.text = "Kies eerst een bronmap."
+        val tree = sourceTree ?: run {
+            status.text = "Kies eerst een fotomap."
             return
         }
         val rootUri = rootDocumentUri(tree)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12, 8, 12, 8)
+            setPadding(10, 8, 10, 8)
         }
         val scroll = ScrollView(this).apply { addView(content) }
+        val countCache = mutableMapOf<String, Pair<Int, Int>>()
 
-        var expandedAll = false
-        lateinit var treeContent: LinearLayout
+        // Iteratief tellen: geen kunstmatige limiet op mapdiepte of aantal foto's.
+        fun countDescendants(folder: Uri): Pair<Int, Int> {
+            countCache[folder.toString()]?.let { return it }
+            val visited = HashSet<String>()
+            val stack = java.util.ArrayDeque<Pair<Uri, Boolean>>()
+            stack.add(folder to false)
+            while (!stack.isEmpty()) {
+                val (uri, processed) = stack.removeLast()
+                val key = uri.toString()
+                if (processed) {
+                    var albums = 0
+                    var photos = 0
+                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                    for (entry in entries) {
+                        if (entry.isDirectory) {
+                            albums++
+                            val child = countCache[entry.uri.toString()]
+                            if (child != null) {
+                                albums += child.first
+                                photos += child.second
+                            }
+                        } else if (isImageEntry(entry)) photos++
+                    }
+                    countCache[key] = albums to photos
+                } else if (visited.add(key)) {
+                    stack.add(uri to true)
+                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                    for (entry in entries) {
+                        if (entry.isDirectory && !countCache.containsKey(entry.uri.toString())) {
+                            stack.add(entry.uri to false)
+                        }
+                    }
+                }
+            }
+            return countCache[folder.toString()] ?: (0 to 0)
+        }
 
-        fun addLevel(parent: Uri, target: LinearLayout, depth: Int, rootLevel: Boolean, expandAll: Boolean = false) {
-            val entries = try {
-                explorerEntries(parent)
-            } catch (e: Exception) {
+        fun addLevel(parent: Uri, target: LinearLayout, depth: Int) {
+            val entries = try { explorerEntries(parent) } catch (e: Exception) {
                 target.addView(TextView(this).apply {
-                    text = "Mapinhoud kon niet worden gelezen: ${e.message ?: "onbekende fout"}"
-                    textSize = 12f
-                    setPadding(depth * 24, 8, 8, 8)
+                    text = "Map niet leesbaar: ${e.message ?: "onbekende fout"}"
                 })
                 return
             }
-            val visibleEntries = if (organizedOnly && rootLevel) {
-                entries.filter { it.isDirectory &&
-                    (it.name.matches(Regex("\\d{8}")) || it.name == "DATUM_ONBEKEND")
-                }
-            } else entries
-
-            if (visibleEntries.isEmpty()) {
+            if (entries.isEmpty()) {
                 target.addView(TextView(this).apply {
-                    text = if (rootLevel && organizedOnly) "Nog geen datum-/ordnermappen gevonden." else "(lege map)"
-                    textSize = 12f
-                    setPadding(depth * 24 + 24, 6, 8, 6)
+                    text = "(lege map)"
+                    setPadding(16, 8, 8, 8)
                 })
             }
-            for (entry in visibleEntries) {
+            for (entry in entries) {
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(depth * 22, 2, 4, 2)
+                    setPadding(12, 4, 8, 4)
+                    setBackgroundColor(Color.rgb(239, 245, 251))
                 }
                 val label = TextView(this).apply {
-                    textSize = 12.5f
-                    text = if (entry.isDirectory) "▸  📁  ${entry.name}" else {
-                        val dimensions = imageDimensions(entry.uri)
-                        val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
-                        "     📄  ${entry.name}  —  ${dimensions ?: "afmetingen onbekend"}  —  $sizeText"
-                    }
-                    setPadding(4, 6, 4, 6)
+                    textSize = 14f
+                    setTextColor(Color.rgb(15, 69, 122))
+                    setPadding(10, 12, 8, 12)
                 }
-                row.addView(label, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                target.addView(row)
+                row.addView(label, LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                ))
+                target.addView(row, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
                 if (entry.isDirectory) {
-                    val childrenView = LinearLayout(this).apply {
+                    val counts = countDescendants(entry.uri)
+                    val caption = "${entry.name} (${counts.first} subalbums, ${counts.second} foto's)"
+                    val children = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
-                        visibility = if (expandAll) View.VISIBLE else View.GONE
+                        visibility = View.GONE
+                        setPadding(18, 0, 0, 0)
                     }
-                    target.addView(childrenView)
-                    if (expandAll) {
-                        addLevel(entry.uri, childrenView, depth + 1, false, true)
-                        label.text = "▾  📂  ${entry.name}"
-                    }
-                    row.setOnClickListener { showFolderGallery(entry.uri, entry.name) }
-                    row.setOnLongClickListener {
-                        if (childrenView.visibility == View.VISIBLE) {
-                            childrenView.visibility = View.GONE
-                            label.text = "▸  📁  ${entry.name}"
-                        } else {
-                            if (childrenView.childCount == 0) addLevel(entry.uri, childrenView, depth + 1, false)
-                            childrenView.visibility = View.VISIBLE
-                            label.text = "▾  📂  ${entry.name}"
+                    target.addView(children)
+                    label.text = "▸ 📁 $caption"
+                    label.setOnClickListener { showFolderGallery(entry.uri, entry.name) }
+                    val toggle = Button(this).apply {
+                        text = "＋"
+                        contentDescription = "Album uit- of inklappen"
+                        setOnClickListener {
+                            if (children.visibility == View.VISIBLE) {
+                                children.visibility = View.GONE
+                                text = "＋"
+                                label.text = "▸ 📁 $caption"
+                            } else {
+                                if (children.childCount == 0) addLevel(entry.uri, children, depth + 1)
+                                children.visibility = View.VISIBLE
+                                text = "−"
+                                label.text = "▾ 📂 $caption"
+                            }
                         }
-                        true
                     }
-                } else if (isImageEntry(entry)) {
-                    row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
+                    row.addView(toggle)
+                } else {
+                    label.text = if (isImageEntry(entry)) "🖼 ${entry.name}  ›" else "📄 ${entry.name}"
+                    if (isImageEntry(entry)) {
+                        row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
+                    }
                 }
             }
         }
 
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val expandButton = Button(this).apply {
-            text = "Alles uitklappen"
-            setOnClickListener {
-                expandedAll = !expandedAll
-                text = if (expandedAll) "Alles inklappen" else "Alles uitklappen"
-                treeContent.removeAllViews()
-                addLevel(rootUri, treeContent, 0, true, expandedAll)
-            }
-        }
-        controls.addView(expandButton)
-        controls.addView(TextView(this).apply {
-            text = "Tik op een map voor de galerij; houd een map lang ingedrukt om de boom uit of in te klappen."
-            textSize = 12.5f
-            setPadding(8, 4, 8, 8)
+        content.addView(TextView(this).apply {
+            text = "Tik op een albumnaam voor de galerij; gebruik + of − om subalbums en foto's uit of in te klappen. Tik op een foto voor beeld, Metadata en Kaart."
+            textSize = 13f
+            setPadding(8, 4, 8, 16)
         })
-        content.addView(controls)
-        treeContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(treeContent)
-        addLevel(rootUri, treeContent, 0, true)
+        addLevel(rootUri, content, 0)
         explorerOpen = true
-        openFullScreen(if (organizedOnly) "Verkenner — geordende foto's" else "Verkenner — bronmap", scroll)
+        openFullScreen("Foto-verkenner", scroll)
     }
 
     private fun formatFileSize(bytes: Long): String = when {
