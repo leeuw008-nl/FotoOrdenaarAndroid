@@ -683,6 +683,7 @@ class MainActivity : ComponentActivity() {
                     target.addView(children)
                     if (all) opened.add(key)
                     labels[key] = label
+                    label.tag = entry.name
                     label.text = caption(entry, all)
                     label.setOnClickListener {
                         currentFolder.text = "Huidige map: ${entry.name}"
@@ -729,9 +730,18 @@ class MainActivity : ComponentActivity() {
         openFullScreen("Foto-verkenner", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         worker.execute {
+            cache[rootUri.toString()] = try {
+                sorted(explorerEntries(rootUri))
+            } catch (_: Exception) { emptyList() }
+            runOnUiThread { refresh(false) }
             countTree()
             runOnUiThread {
-                refresh(false)
+                for ((key, label) in labels) {
+                    val entryName = label.tag as? String ?: continue
+                    val c = counts[key] ?: continue
+                    val isExpanded = opened.contains(key)
+                    label.text = "${if (isExpanded) "▾ 📂" else "▸ 📁"}  $entryName (${c.first} subalbums, ${c.second} foto's)"
+                }
             }
         }
     }
