@@ -707,7 +707,7 @@ class MainActivity : ComponentActivity() {
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; singleLine = true }
+        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
         searchRow.addView(Button(this).apply {
             text = "Zoeken"
