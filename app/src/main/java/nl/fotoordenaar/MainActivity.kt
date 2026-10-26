@@ -25,6 +25,7 @@ import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.view.View
+import android.view.MotionEvent
 import android.widget.ProgressBar
 import android.widget.Button
 import android.widget.LinearLayout
@@ -171,13 +172,6 @@ class MainActivity : ComponentActivity() {
         homeView = root
         setContentView(root)
         sourceTree?.let { status.text = "Eerder gekozen fotomap beschikbaar. Geen nieuwe maptoestemming nodig." }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-            requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
-        } else if (Build.VERSION.SDK_INT >= 29 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -303,7 +297,7 @@ class MainActivity : ComponentActivity() {
         if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
     }
 
-    private fun showFullscreenPhoto(uri: Uri, name: String) {
+    private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -313,6 +307,22 @@ class MainActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
             setImageDrawable(null)
+        }
+        if (album != null && album.size > 1) {
+            var touchX = 0f
+            image.setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { touchX = event.x; true }
+                    MotionEvent.ACTION_UP -> {
+                        val next = (position + if (event.x - touchX < 0) 1 else -1).coerceIn(0, album.lastIndex)
+                        if (kotlin.math.abs(event.x - touchX) > 75 * resources.displayMetrics.density && next != position) {
+                            showFullscreenPhoto(album[next].uri, album[next].name, album, next)
+                        }
+                        true
+                    }
+                    else -> true
+                }
+            }
         }
         root.addView(image, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f
@@ -404,7 +414,10 @@ class MainActivity : ComponentActivity() {
         ))
         }
         val tabBody = FrameLayout(this)
+        val coords = cachedGpsCoordinates(name) ?: try { gpsCoordinates(readExif(uri)) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri) } catch (_: Exception) { null }
+        var mapInitialized = false
         fun selectTab(map: Boolean) {
+            if (map && !mapInitialized) { mapInitialized = true; showMap(coords) }
             tabBody.removeAllViews()
             tabBody.addView(if (map) mapHolder else metadataScroll, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
@@ -432,13 +445,6 @@ class MainActivity : ComponentActivity() {
             val bitmap = try { loadSampledBitmap(uri, 2600) } catch (_: Exception) { null }
             runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
         }
-        // Zelfde GPS-route als de werkende FotoOrdenaar: locatie bepalen
-        // voordat de kaartweergave wordt geopend.
-        val coords = cachedGpsCoordinates(name) ?: try {
-            val exif = readExif(uri)
-            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
-        } catch (_: Exception) { null }
-        showMap(coords)
         photoWorker.execute {
             val metadata = try {
                 buildPhotoMetadata(uri, name).ifBlank { "Geen metadata gevonden." }
@@ -527,6 +533,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
+        val loading = TextView(this).apply { text = "Gallery laden…"; textSize = 16f; setPadding(24,24,24,24) }
+        openFullScreen(folderName, loading)
+        photoWorker.execute {
         val photos = mutableListOf<ExplorerEntry>()
         val visited = HashSet<String>()
         val pending = java.util.ArrayDeque<Uri>()
@@ -540,6 +549,8 @@ class MainActivity : ComponentActivity() {
                 else if (entry.isDirectory) pending.add(entry.uri)
             }
         }
+        runOnUiThread {
+        if (loading.parent == null) return@runOnUiThread
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
         val screenWidthDp = (screenWidthPx / density).toInt()
@@ -591,9 +602,12 @@ class MainActivity : ComponentActivity() {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         cellWidthPx - (8 * density).toInt()
                     )
-                    loadSampledBitmap(photo.uri, 600)?.let { setImageBitmap(it) }
+                    photoWorker.execute {
+                        val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
+                        runOnUiThread { if (parent != null) setImageBitmap(bitmap) }
+                    }
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name) }
+                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo)) }
                 }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
@@ -605,7 +619,10 @@ class MainActivity : ComponentActivity() {
                 grid.addView(tile)
             }
         }
-        openFullScreen("$folderName — ${photos.size} foto's", scroll)
+        val holder = loading.parent as? ViewGroup
+        holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(scroll, index, ViewGroup.LayoutParams(-1,-1)) }
+        }
+        }
     }
 
     private fun showExplorer(organizedOnly: Boolean) {
