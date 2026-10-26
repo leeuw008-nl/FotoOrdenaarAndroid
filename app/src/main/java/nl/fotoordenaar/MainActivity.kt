@@ -852,6 +852,7 @@ class MainActivity : ComponentActivity() {
                     label.text = "📁  $entryName (${c.first} subalbums, ${c.second} foto's)"
                 }
             }
+            }
         }
     }
 
