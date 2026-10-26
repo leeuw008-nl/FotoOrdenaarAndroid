@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
     private val requestReadImages =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                if (Build.VERSION.SDK_INT >= 29 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
             } else {
                 status.text = "Fototoegang ontbreekt. GPS-locaties zijn mogelijk niet leesbaar."
             }
@@ -172,6 +172,20 @@ class MainActivity : ComponentActivity() {
         homeView = root
         setContentView(root)
         sourceTree?.let { status.text = "Eerder gekozen fotomap beschikbaar. Geen nieuwe maptoestemming nodig." }
+        // Hoogstens eenmaal vragen, nooit bij openen van albums of foto's.
+        val permissionPrefs = getSharedPreferences("foto_verkenner", MODE_PRIVATE)
+        if (!permissionPrefs.getBoolean("media_permissions_asked", false)) {
+            permissionPrefs.edit().putBoolean("media_permissions_asked", true).apply()
+            val imagePermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
+                else Manifest.permission.READ_EXTERNAL_STORAGE
+            if (Build.VERSION.SDK_INT >= 29 &&
+                ContextCompat.checkSelfPermission(this, imagePermission) != PackageManager.PERMISSION_GRANTED) {
+                requestReadImages.launch(imagePermission)
+            } else if (Build.VERSION.SDK_INT >= 29 &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -316,6 +330,7 @@ class MainActivity : ComponentActivity() {
                     MotionEvent.ACTION_UP -> {
                         val next = (position + if (event.x - touchX < 0) 1 else -1).coerceIn(0, album.lastIndex)
                         if (kotlin.math.abs(event.x - touchX) > 75 * resources.displayMetrics.density && next != position) {
+                            closeFullScreen()
                             showFullscreenPhoto(album[next].uri, album[next].name, album, next)
                         }
                         true
@@ -855,7 +870,7 @@ class MainActivity : ComponentActivity() {
             scroll.smoothScrollTo(0, 0)
         }
         allButton.setOnClickListener {
-            expandAll = !expandAll
+            expandAll = if (opened.isNotEmpty() || expandAll) false else true
             allButton.text = if (expandAll) "Alles inklappen" else "Alles uitklappen"
             refresh(expandAll)
         }
@@ -1028,18 +1043,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun readExif(uri: Uri): ExifInterface? {
-        val original = originalMediaUri(uri)
-        return try {
-            contentResolver.openFileDescriptor(original, "r")?.use { pfd ->
-                ExifInterface(pfd.fileDescriptor)
-            }
-        } catch (_: Exception) {
+        // Eerst de expliciet geselecteerde SAF-foto proberen; originele
+        // MediaStore-toegang kan zonder extra permissie SecurityException geven.
+        val candidates = listOf(uri, originalMediaUri(uri)).distinct()
+        for (candidate in candidates) {
             try {
-                contentResolver.openInputStream(original)?.use { ExifInterface(it) }
-            } catch (_: Exception) {
-                null
-            }
+                contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
+                    return ExifInterface(pfd.fileDescriptor)
+                }
+            } catch (_: Exception) {}
+            try {
+                contentResolver.openInputStream(candidate)?.use { return ExifInterface(it) }
+            } catch (_: Exception) {}
         }
+        return null
     }
 
     // Independent fallback parser: Drew Noakes metadata-extractor.
@@ -1534,28 +1551,6 @@ class MainActivity : ComponentActivity() {
             status.text = "Kies eerst een bronmap."
             return
         }
-        if (Build.VERSION.SDK_INT >= 29 && Build.VERSION.SDK_INT <= 32 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestReadImages.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
-                != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 29 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION)
-                != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-            return
-        }
-
         previewReady = false
         setButtonProgress(previewButton, 0)
         previewButton.text = "2. FOTO'S ANALYSEREN — 0%"
