@@ -95,16 +95,16 @@ class MainActivity : ComponentActivity() {
             if (granted) {
                 requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
             } else {
-                status.text = "Toegang tot de fotobibliotheek is niet verleend. De app kan daardoor de originele GPS-metadata mogelijk niet vinden."
+                status.text = "Fototoegang ontbreekt. GPS-locaties zijn mogelijk niet leesbaar."
             }
         }
 
     private val requestMediaLocation =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                previewFiles()
+                status.text = "Toegang tot originele GPS-metadata verleend."
             } else {
-                status.text = "Toegang tot GPS-metadata is niet verleend. Android kan de locatiegegevens afschermen. Verleen de machtiging en probeer opnieuw."
+                status.text = "GPS-toestemming ontbreekt. Android kan locatiegegevens afschermen."
             }
         }
 
@@ -118,6 +118,13 @@ class MainActivity : ComponentActivity() {
                     )
                 } catch (_: SecurityException) {}
                 status.text = "Fotomap geselecteerd. Tik op Verkenner openen."
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                    requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
+                } else if (Build.VERSION.SDK_INT >= 29 &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                }
                 showExplorer(organizedOnly = false)
             }
         }
@@ -287,7 +294,7 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
-            loadSampledBitmap(uri, 2600)?.let { setImageBitmap(it) }
+            setImageDrawable(null)
         }
         root.addView(image, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f
@@ -314,25 +321,24 @@ class MainActivity : ComponentActivity() {
             isFillViewport = true
             addView(details)
         }
-        val metadataText = try {
-            buildPhotoMetadata(uri, name).ifBlank { "Voor deze foto zijn geen metadata gevonden." }
-        } catch (e: Exception) {
-            "Metadata uitlezen is mislukt: ${e.javaClass.simpleName}: ${e.message ?: "geen details"}"
-        }
-        details.addView(TextView(this).apply {
-            text = metadataText
+        val metadataLabel = TextView(this).apply {
+            text = "Metadata laden…"
             textSize = 14f
             setTextIsSelectable(true)
             setTextColor(Color.BLACK)
             setBackgroundColor(Color.WHITE)
-        })
-        val coords = cachedGpsCoordinates(name) ?: try {
-            val exif = readExif(uri)
-            // Gebruik eerst opgeslagen coördinaten; probeer daarna de lichte EXIF-route
-            // en de metadata-bibliotheek vóór de volledige XMP-scan.
-            gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
-        } catch (_: Exception) { null }
-
+        }
+        details.addView(metadataLabel)
+        val mapHolder = FrameLayout(this)
+        val mapLoading = TextView(this).apply {
+            text = "GPS-locatie laden…"
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+            setPadding(20, 20, 20, 20)
+        }
+        mapHolder.addView(mapLoading)
+        fun showMap(coords: DoubleArray?) {
         val mapView = if (coords == null) {
             TextView(this).apply {
                 text = "Deze foto bevat geen leesbare GPS-coördinaten. Er kan geen locatiespeld worden getoond.\n\nControleer in Metadata of GPS-breedtegraad en GPS-lengtegraad aanwezig zijn."
@@ -374,10 +380,15 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        mapHolder.removeAllViews()
+        mapHolder.addView(mapView, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        }
         val tabBody = FrameLayout(this)
         fun selectTab(map: Boolean) {
             tabBody.removeAllViews()
-            tabBody.addView(if (map) mapView else metadataScroll, ViewGroup.LayoutParams(
+            tabBody.addView(if (map) mapHolder else metadataScroll, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             ))
             tabs.getChildAt(0).isSelected = !map
@@ -399,6 +410,18 @@ class MainActivity : ComponentActivity() {
         ))
         selectTab(false)
         openFullScreen(name, root, dark = true)
+        worker.execute {
+            val bitmap = loadSampledBitmap(uri, 2600)
+            runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
+            val coords = cachedGpsCoordinates(name) ?: try {
+                gpsCoordinates(readExif(uri)) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
+            } catch (_: Exception) { null }
+            runOnUiThread { if (!isFinishing) showMap(coords) }
+            val metadata = try {
+                buildPhotoMetadata(uri, name).ifBlank { "Geen metadata gevonden." }
+            } catch (e: Exception) { "Metadata uitlezen mislukt: ${e.message}" }
+            runOnUiThread { if (!isFinishing) metadataLabel.text = metadata }
+        }
     }
 
     private fun buildPhotoMetadata(uri: Uri, name: String): String {
@@ -673,15 +696,15 @@ class MainActivity : ComponentActivity() {
                 }
                 val arrow = if (entry.isDirectory) TextView(this).apply {
                     text = if (all) "▾" else "▸"
-                    textSize = 27f
+                    textSize = 20f
                     gravity = Gravity.CENTER
                     setTextColor(Color.rgb(15, 69, 122))
                     setBackgroundColor(Color.rgb(225, 237, 250))
                     contentDescription = "Album uit- of inklappen"
                 } else null
                 if (arrow != null) row.addView(arrow, LinearLayout.LayoutParams(
-                    (54 * resources.displayMetrics.density).toInt(),
-                    (48 * resources.displayMetrics.density).toInt()
+                    (40 * resources.displayMetrics.density).toInt(),
+                    (40 * resources.displayMetrics.density).toInt()
                 ))
                 row.addView(label, LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
@@ -717,9 +740,13 @@ class MainActivity : ComponentActivity() {
                         showFolderGallery(entry.uri, entry.name)
                         true
                     }
-                    val subtreeButton = Button(this).apply {
-                        text = "Alles vanaf hier ▾"
-                        textSize = 11f
+                    val subtreeArrow = TextView(this).apply {
+                        text = "▾▾"
+                        textSize = 19f
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.rgb(39, 121, 149))
+                        contentDescription = "Alle subalbums vanaf hier uitklappen"
                         setOnClickListener {
                             currentFolder.text = "Huidige map: ${entry.name}"
                             children.removeAllViews()
@@ -729,7 +756,10 @@ class MainActivity : ComponentActivity() {
                             addLevel(entry.uri, children, depth + 1, true)
                         }
                     }
-                    row.addView(subtreeButton)
+                    row.addView(subtreeArrow, 1, LinearLayout.LayoutParams(
+                        (40 * resources.displayMetrics.density).toInt(),
+                        (40 * resources.displayMetrics.density).toInt()
+                    ))
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
                     label.text = if (isImageEntry(entry)) "🖼  ${entry.name}  ›" else "📄  ${entry.name}"
