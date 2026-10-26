@@ -372,75 +372,65 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.WHITE)
         }
         details.addView(metadataLabel)
+        // Dezelfde OSM-tabopbouw als de werkende FotoOrdenaar.
         val mapHolder = FrameLayout(this)
-        val mapLoading = TextView(this).apply {
-            text = "GPS-locatie laden…"
-            textSize = 15f
-            setTextColor(Color.BLACK)
-            setBackgroundColor(Color.WHITE)
-            setPadding(20, 20, 20, 20)
-        }
-        mapHolder.addView(mapLoading)
-        fun showMap(coords: DoubleArray?) {
-        val mapView = if (coords == null) {
-            TextView(this).apply {
-                text = "Deze foto bevat geen leesbare GPS-coördinaten. Er kan geen locatiespeld worden getoond.\n\nControleer in Metadata of GPS-breedtegraad en GPS-lengtegraad aanwezig zijn."
-                textSize = 15f
-                setTextColor(Color.BLACK)
-                setBackgroundColor(Color.WHITE)
-                setPadding(20, 20, 20, 20)
-            }
-        } else {
-            WebView(this).apply {
+        val tabBody = FrameLayout(this)
+        var mapLoaded = false
+        fun showMap(coords: DoubleArray?, diagnostic: String = "") {
+            val mapView: View = if (coords == null) {
+                TextView(this).apply {
+                    text = "Geen leesbare GPS-coördinaten gevonden.\n" + diagnostic +
+                        "\nControleer of de app toegang tot originele fotolocaties heeft."
+                    textSize = 15f
+                    setTextColor(Color.BLACK)
+                    setBackgroundColor(Color.WHITE)
+                    setPadding(20, 20, 20, 20)
+                }
+            } else WebView(this).apply {
                 setBackgroundColor(Color.WHITE)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.loadsImagesAutomatically = true
-                webViewClient = object : WebViewClient() {
-                    override fun onReceivedError(
-                        view: WebView,
-                        request: android.webkit.WebResourceRequest,
-                        error: android.webkit.WebResourceError
-                    ) {
-                        if (request.isForMainFrame) {
-                            view.loadDataWithBaseURL(
-                                null,
-                                "<html><body style='font-family:sans-serif;padding:20px;color:#222'>" +
-                                    "<h3>Kaart niet geladen</h3><p>Open internetverbinding en probeer opnieuw.</p>" +
-                                    "<p>GPS: ${coords[0]}, ${coords[1]}</p></body></html>",
-                                "text/html", "UTF-8", null
-                            )
-                        }
-                    }
-                }
+                webViewClient = WebViewClient()
                 val lat = coords[0]
                 val lon = coords[1]
                 val delta = 0.008
-                val mapUrl = "https://www.openstreetmap.org/export/embed.html?bbox=" +
+                loadUrl("https://www.openstreetmap.org/export/embed.html?bbox=" +
                     "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
-                    "&layer=mapnik&marker=${lat}%2C${lon}"
-                loadUrl(mapUrl)
+                    "&layer=mapnik&marker=${lat}%2C${lon}")
             }
+            mapHolder.removeAllViews()
+            mapHolder.addView(mapView, FrameLayout.LayoutParams(-1, -1))
         }
-
-        mapHolder.removeAllViews()
-        mapHolder.addView(mapView, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        }
-        val tabBody = FrameLayout(this)
-        val coords = cachedGpsCoordinates(name) ?: try { gpsCoordinates(readExif(uri)) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri) } catch (_: Exception) { null }
-        var mapInitialized = false
         fun selectTab(map: Boolean) {
-            if (map && !mapInitialized) { mapInitialized = true; showMap(coords) }
             tabBody.removeAllViews()
-            tabBody.addView(if (map) mapHolder else metadataScroll, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-            tabs.getChildAt(0).isSelected = !map
-            tabs.getChildAt(1).isSelected = map
+            tabBody.addView(if (map) mapHolder else metadataScroll,
+                ViewGroup.LayoutParams(-1, -1))
             (tabs.getChildAt(0) as Button).text = if (!map) "● Metadata" else "Metadata"
             (tabs.getChildAt(1) as Button).text = if (map) "● Kaart" else "Kaart"
+            if (map && !mapLoaded) {
+                mapLoaded = true
+                mapHolder.addView(TextView(this).apply {
+                    text = "GPS-locatie lezen…"
+                    setPadding(20,20,20,20)
+                })
+                photoWorker.execute {
+                    val cached = cachedGpsCoordinates(name)
+                    val exifCoords = try { gpsCoordinates(readExif(uri)) } catch (_: Exception) { null }
+                    val altCoords = if (cached == null && exifCoords == null)
+                        alternateGpsCoordinates(uri) else null
+                    val xmpCoords = if (cached == null && exifCoords == null && altCoords == null)
+                        xmpGpsCoordinates(uri) else null
+                    val coords = cached ?: exifCoords ?: altCoords ?: xmpCoords
+                    val permission = Build.VERSION.SDK_INT < 29 ||
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+                    val info = if (!permission) "Android-toestemming 'locatiegegevens van media' ontbreekt.\n"
+                        else "EXIF, alternatieve metadata en XMP zijn gecontroleerd.\n"
+                    runOnUiThread {
+                        if (mapHolder.parent != null) showMap(coords, info)
+                    }
+                }
+            }
         }
         tabs.addView(Button(this).apply {
             text = "Metadata"
