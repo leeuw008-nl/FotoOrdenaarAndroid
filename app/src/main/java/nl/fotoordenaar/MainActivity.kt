@@ -34,6 +34,7 @@ import android.widget.TextView
 import android.widget.ImageView
 import android.widget.GridLayout
 import android.widget.FrameLayout
+import android.widget.EditText
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.graphics.Bitmap
@@ -342,6 +343,31 @@ class MainActivity : ComponentActivity() {
         root.addView(image, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f
         ))
+        if (album != null && album.size > 1) {
+            val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            navigation.addView(Button(this).apply {
+                text = "◀ Vorige"
+                isEnabled = position > 0
+                setOnClickListener {
+                    closeFullScreen()
+                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(TextView(this).apply {
+                text = "${position + 1} / ${album.size}"
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(Button(this).apply {
+                text = "Volgende ▶"
+                isEnabled = position < album.lastIndex
+                setOnClickListener {
+                    closeFullScreen()
+                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            root.addView(navigation)
+        }
         root.addView(TextView(this).apply {
             text = name
             textSize = 13f
@@ -556,6 +582,11 @@ class MainActivity : ComponentActivity() {
         }
         runOnUiThread {
         if (loading.parent == null) return@runOnUiThread
+        renderPhotoGrid(photos, loading)
+        }
+    }
+
+    private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
         val screenWidthDp = (screenWidthPx / density).toInt()
@@ -626,7 +657,29 @@ class MainActivity : ComponentActivity() {
         }
         val holder = loading.parent as? ViewGroup
         holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(scroll, index, ViewGroup.LayoutParams(-1,-1)) }
-        }
+    }
+
+    private fun showSearchGallery(rootUri: Uri, term: String) {
+        val loading = TextView(this).apply { text = "Zoeken naar $term…"; setPadding(20,20,20,20) }
+        openFullScreen("Zoekalbum: $term", loading)
+        photoWorker.execute {
+            val matches = mutableListOf<ExplorerEntry>()
+            val pending = java.util.ArrayDeque<Uri>()
+            val visited = HashSet<String>()
+            pending.add(rootUri)
+            while (!pending.isEmpty()) {
+                val uri = pending.removeLast()
+                if (!visited.add(uri.toString())) continue
+                val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                for (entry in entries) {
+                    if (entry.isDirectory) pending.add(entry.uri)
+                    else if (isImageEntry(entry) && entry.name.contains(term, ignoreCase = true)) matches.add(entry)
+                }
+            }
+            matches.sortBy { it.name.lowercase(Locale.ROOT) }
+            runOnUiThread {
+                if (loading.parent != null) renderPhotoGrid(matches, loading)
+            }
         }
     }
 
@@ -650,10 +703,20 @@ class MainActivity : ComponentActivity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(currentFolder)
-        val homeButton = Button(this).apply { text = "⌂  Naar hoofdalbum" }
-        root.addView(homeButton)
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
+        val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; singleLine = true }
+        searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
+        searchRow.addView(Button(this).apply {
+            text = "Zoeken"
+            setOnClickListener {
+                val term = searchInput.text.toString().trim()
+                if (term.isBlank()) { searchInput.error = "Zoekterm invullen" }
+                else showSearchGallery(rootUri, term)
+            }
+        })
+        root.addView(searchRow)
         root.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
@@ -852,16 +915,10 @@ class MainActivity : ComponentActivity() {
             content.removeAllViews()
             addLevel(rootUri, content, 0, all)
         }
-        homeButton.setOnClickListener {
-            currentFolder.text = "Huidige map: ${tree.lastPathSegment ?: "Fotomap"}"
-            expandAll = false
-            allButton.text = "Alles uitklappen"
-            refresh(false)
-            scroll.smoothScrollTo(0, 0)
-        }
         allButton.setOnClickListener {
             expandAll = if (opened.isNotEmpty() || expandAll) false else true
             allButton.text = if (expandAll) "Alles inklappen" else "Alles uitklappen"
+            if (!expandAll) { currentFolder.text = "Huidige map: hoofdalbum"; scroll.smoothScrollTo(0, 0) }
             refresh(expandAll)
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
