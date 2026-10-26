@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
     private var previewPlans: List<Plan>? = null
     private var moveRunning = false
     private val worker = Executors.newSingleThreadExecutor()
+    // Foto- en metadataweergave mag niet wachten op het indexeren van albums.
+    private val photoWorker = Executors.newFixedThreadPool(2)
+    private val dimensionWorker = Executors.newSingleThreadExecutor()
     private var homeView: View? = null
     private val screenStack = mutableListOf<View>()
 
@@ -425,9 +428,11 @@ class MainActivity : ComponentActivity() {
         ))
         selectTab(false)
         openFullScreen(name, root, dark = true)
-        worker.execute {
-            val bitmap = loadSampledBitmap(uri, 2600)
+        photoWorker.execute {
+            val bitmap = try { loadSampledBitmap(uri, 2600) } catch (_: Exception) { null }
             runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
+        }
+        photoWorker.execute {
             val coords = cachedGpsCoordinates(name) ?: try {
                 gpsCoordinates(readExif(uri)) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
             } catch (_: Exception) { null }
@@ -794,7 +799,7 @@ class MainActivity : ComponentActivity() {
                         "🖼  ${entry.name}  —  $sizeText  —  afmetingen laden…  ›"
                     else "📄  ${entry.name}  —  $sizeText"
                     if (isImageEntry(entry)) {
-                        worker.execute {
+                        dimensionWorker.execute {
                             val dimensions = imageDimensions(entry.uri) ?: "afmetingen onbekend"
                             runOnUiThread {
                                 if (label.parent != null) label.text =
@@ -833,12 +838,12 @@ class MainActivity : ComponentActivity() {
         explorerOpen = true
         openFullScreen("Foto-verkenner", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
-        worker.execute {
+        dimensionWorker.execute {
             cache[rootUri.toString()] = try {
                 sorted(explorerEntries(rootUri))
             } catch (_: Exception) { emptyList() }
             runOnUiThread { refresh(false) }
-            countTree()
+            worker.execute { countTree()
             runOnUiThread {
                 for ((key, label) in labels) {
                     val entryName = label.tag as? String ?: continue
