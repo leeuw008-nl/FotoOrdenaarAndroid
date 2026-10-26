@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
     // Foto- en metadataweergave mag niet wachten op het indexeren van albums.
     private val photoWorker = Executors.newFixedThreadPool(2)
     private val viewerWorker = Executors.newFixedThreadPool(2)
+    private val galleryThumbWorker = Executors.newFixedThreadPool(4)
     private val dimensionWorker = Executors.newSingleThreadExecutor()
     private var homeView: View? = null
     private val screenStack = mutableListOf<View>()
@@ -754,12 +755,12 @@ class MainActivity : ComponentActivity() {
                     setPadding(2, 2, 2, 4)
                 })
                 grid.addView(tile)
-                // Pas na toevoegen aan de layout laden: anders kan de callback
-                // al draaien terwijl thumb.parent nog null is.
-                photoWorker.execute {
+                // Nieuwe Gallery krijgt een eigen thumbnail-wachtrij. Eerdere albums
+                // mogen de nieuwe thumbnails niet blokkeren.
+                galleryThumbWorker.execute {
                     val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
                     runOnUiThread {
-                        if (thumb.parent != null && bitmap != null) thumb.setImageBitmap(bitmap)
+                        if (!isFinishing && bitmap != null) thumb.setImageBitmap(bitmap)
                     }
                 }
             }
