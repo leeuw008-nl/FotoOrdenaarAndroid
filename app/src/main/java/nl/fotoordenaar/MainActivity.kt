@@ -369,13 +369,20 @@ class MainActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             root.addView(navigation)
         }
-        root.addView(TextView(this).apply {
+        val filenameRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        filenameRow.addView(TextView(this).apply {
             text = name
             textSize = 13f
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(8, 5, 8, 5)
-        })
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(filenameRow)
 
         val tabs = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -481,7 +488,7 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Beeldvullende foto aan of uit"
         }
         val iconSize = (46 * resources.displayMetrics.density).toInt()
-        photoFrame.addView(fullscreenButton, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.TOP or Gravity.END))
+        filenameRow.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
             tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
@@ -703,6 +710,27 @@ class MainActivity : ComponentActivity() {
         }
         val holder = loading.parent as? ViewGroup
         holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(scroll, index, ViewGroup.LayoutParams(-1,-1)) }
+    }
+
+    private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
+        val loading = TextView(this).apply {
+            text = "Album laden voor bladeren…"
+            setPadding(20, 20, 20, 20)
+        }
+        openFullScreen(name, loading)
+        photoWorker.execute {
+            val photos = try { explorerEntries(folderUri).filter { isImageEntry(it) }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }) }
+                catch (_: Exception) { emptyList() }
+            val index = photos.indexOfFirst { it.uri == uri }.coerceAtLeast(0)
+            runOnUiThread {
+                if (loading.parent != null) {
+                    closeFullScreen()
+                    if (photos.isNotEmpty()) showFullscreenPhoto(photos[index].uri, photos[index].name, photos, index)
+                    else showFullscreenPhoto(uri, name)
+                }
+            }
+        }
     }
 
     private fun showSearchGallery(rootUri: Uri, term: String) {
@@ -947,7 +975,7 @@ class MainActivity : ComponentActivity() {
                         }
                         label.setOnClickListener {
                             currentFolder.text = "Huidige map: ${entry.name}"
-                            showFullscreenPhoto(entry.uri, entry.name)
+                            showPhotoFromFolder(entry.uri, entry.name, parent)
                         }
                     }
                 }
