@@ -312,11 +312,12 @@ class MainActivity : ComponentActivity() {
         if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
     }
 
-    private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0) {
+    private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
         }
+        var photoOnlyState = startPhotoOnly
         val image = ImageView(this).apply {
             setBackgroundColor(Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -332,7 +333,7 @@ class MainActivity : ComponentActivity() {
                         val next = (position + if (event.x - touchX < 0) 1 else -1).coerceIn(0, album.lastIndex)
                         if (kotlin.math.abs(event.x - touchX) > 75 * resources.displayMetrics.density && next != position) {
                             closeFullScreen()
-                            showFullscreenPhoto(album[next].uri, album[next].name, album, next)
+                            showFullscreenPhoto(album[next].uri, album[next].name, album, next, startPhotoOnly = photoOnlyState)
                         }
                         true
                     }
@@ -340,9 +341,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        root.addView(image, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f
-        ))
+        val photoFrame = FrameLayout(this)
+        photoFrame.addView(image, FrameLayout.LayoutParams(-1, -1))
+        root.addView(photoFrame, LinearLayout.LayoutParams(-1, 0, 0.9f))
         if (album != null && album.size > 1) {
             val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             navigation.addView(Button(this).apply {
@@ -350,7 +351,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position > 0
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1)
+                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1, startPhotoOnly = photoOnlyState)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             navigation.addView(TextView(this).apply {
@@ -363,7 +364,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position < album.lastIndex
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1)
+                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1, startPhotoOnly = photoOnlyState)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             root.addView(navigation)
@@ -471,22 +472,34 @@ class MainActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f
         ))
         selectTab(false)
-        val fullscreenButton = Button(this).apply { text = "⛶ Beeldvullend" }
-        root.addView(fullscreenButton)
-        var photoOnly = false
-        fullscreenButton.setOnClickListener {
-            photoOnly = !photoOnly
-            tabs.visibility = if (photoOnly) View.GONE else View.VISIBLE
-            tabBody.visibility = if (photoOnly) View.GONE else View.VISIBLE
-            for (index in 1 until root.childCount - 1) {
-                val child = root.getChildAt(index)
-                if (child !== tabs && child !== tabBody) child.visibility = if (photoOnly) View.GONE else View.VISIBLE
-            }
-            val params = image.layoutParams as LinearLayout.LayoutParams
-            params.weight = if (photoOnly) 1f else 0.9f
-            image.layoutParams = params
-            fullscreenButton.text = if (photoOnly) "Terug naar details" else "⛶ Beeldvullend"
+        val fullscreenButton = TextView(this).apply {
+            text = if (photoOnlyState) "⤡" else "⛶"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Beeldvullende foto aan of uit"
         }
+        val iconSize = (46 * resources.displayMetrics.density).toInt()
+        photoFrame.addView(fullscreenButton, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.TOP or Gravity.END))
+        fun applyPhotoMode() {
+            tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
+            tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
+            for (index in 1 until root.childCount) {
+                val child = root.getChildAt(index)
+                if (child !== tabs && child !== tabBody) child.visibility =
+                    if (photoOnlyState) View.GONE else View.VISIBLE
+            }
+            val params = photoFrame.layoutParams as LinearLayout.LayoutParams
+            params.weight = if (photoOnlyState) 1f else 0.9f
+            photoFrame.layoutParams = params
+            fullscreenButton.text = if (photoOnlyState) "⤡" else "⛶"
+        }
+        fullscreenButton.setOnClickListener {
+            photoOnlyState = !photoOnlyState
+            applyPhotoMode()
+        }
+        applyPhotoMode()
         openFullScreen(name, root, dark = true)
         if (album != null) {
             photoWorker.execute {
@@ -496,7 +509,7 @@ class MainActivity : ComponentActivity() {
                 val xmpCoords = if (cached == null && exifCoords == null && altCoords == null) xmpGpsCoordinates(uri) else null
                 val coords = cached ?: exifCoords ?: altCoords ?: xmpCoords
                 runOnUiThread {
-                    if (root.parent != null && coords != null && !photoOnly) {
+                    if (root.parent != null && coords != null && !photoOnlyState) {
                         mapLoaded = true
                         selectTab(true)
                         showMap(coords)
