@@ -112,6 +112,8 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 sourceTree = uri
+                getSharedPreferences("foto_verkenner", MODE_PRIVATE)
+                    .edit().putString("selected_tree", uri.toString()).apply()
                 try {
                     contentResolver.takePersistableUriPermission(
                         uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -132,6 +134,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sourceTree = savedInstanceState?.getString("sourceTree")?.let(Uri::parse)
+            ?: getSharedPreferences("foto_verkenner", MODE_PRIVATE)
+                .getString("selected_tree", null)?.let(Uri::parse)
+        if (sourceTree != null && contentResolver.persistedUriPermissions.none {
+                it.uri == sourceTree && it.isReadPermission
+            }) {
+            sourceTree = null
+            getSharedPreferences("foto_verkenner", MODE_PRIVATE)
+                .edit().remove("selected_tree").apply()
+        }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 24, 20, 20)
@@ -148,7 +159,11 @@ class MainActivity : ComponentActivity() {
         root.addView(status)
         sourceButton = Button(this).apply {
             text = "Fotomap kiezen"
-            setOnClickListener { pickFolder.launch(null) }
+            setOnClickListener {
+                val existing = sourceTree
+                if (existing != null) showExplorer(organizedOnly = false)
+                else pickFolder.launch(null)
+            }
         }
         root.addView(sourceButton)
         previewButton = Button(this)
@@ -159,7 +174,7 @@ class MainActivity : ComponentActivity() {
         })
         homeView = root
         setContentView(root)
-        sourceTree?.let { status.text = "Fotomap geselecteerd. Tik op Verkenner openen." }
+        sourceTree?.let { status.text = "Eerder gekozen fotomap beschikbaar. Geen nieuwe maptoestemming nodig." }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -696,15 +711,15 @@ class MainActivity : ComponentActivity() {
                 }
                 val arrow = if (entry.isDirectory) TextView(this).apply {
                     text = if (all) "▾" else "▸"
-                    textSize = 20f
+                    textSize = 15f
                     gravity = Gravity.CENTER
                     setTextColor(Color.rgb(15, 69, 122))
                     setBackgroundColor(Color.rgb(225, 237, 250))
                     contentDescription = "Album uit- of inklappen"
                 } else null
                 if (arrow != null) row.addView(arrow, LinearLayout.LayoutParams(
-                    (40 * resources.displayMetrics.density).toInt(),
-                    (40 * resources.displayMetrics.density).toInt()
+                    (30 * resources.displayMetrics.density).toInt(),
+                    (20 * resources.displayMetrics.density).toInt()
                 ))
                 row.addView(label, LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
@@ -742,23 +757,31 @@ class MainActivity : ComponentActivity() {
                     }
                     val subtreeArrow = TextView(this).apply {
                         text = "▾▾"
-                        textSize = 19f
+                        textSize = 14f
                         gravity = Gravity.CENTER
                         setTextColor(Color.WHITE)
                         setBackgroundColor(Color.rgb(39, 121, 149))
                         contentDescription = "Alle subalbums vanaf hier uitklappen"
                         setOnClickListener {
                             currentFolder.text = "Huidige map: ${entry.name}"
-                            children.removeAllViews()
-                            children.visibility = View.VISIBLE
-                            opened.add(key)
-                            arrow?.text = "▾"
-                            addLevel(entry.uri, children, depth + 1, true)
+                            if (children.visibility == View.VISIBLE && tag == true) {
+                                children.visibility = View.GONE
+                                opened.remove(key)
+                                arrow?.text = "▸"
+                                tag = false
+                            } else {
+                                children.removeAllViews()
+                                children.visibility = View.VISIBLE
+                                opened.add(key)
+                                arrow?.text = "▾"
+                                addLevel(entry.uri, children, depth + 1, true)
+                                tag = true
+                            }
                         }
                     }
                     row.addView(subtreeArrow, 1, LinearLayout.LayoutParams(
-                        (40 * resources.displayMetrics.density).toInt(),
-                        (40 * resources.displayMetrics.density).toInt()
+                        (30 * resources.displayMetrics.density).toInt(),
+                        (20 * resources.displayMetrics.density).toInt()
                     ))
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
