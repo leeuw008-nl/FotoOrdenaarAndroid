@@ -760,7 +760,12 @@ class MainActivity : ComponentActivity() {
                         arrow?.text = if (expanded) "▾" else "▸"
                     }
                     arrow?.setOnClickListener { toggleAlbum() }
-                    label.setOnClickListener { toggleAlbum() }
+                    // Zoals in FotoOrdenaar: tik op de albumnaam voor de galerij.
+                    // De enkele en dubbele pijl blijven uitsluitend voor de boomstructuur.
+                    label.setOnClickListener {
+                        currentFolder.text = "Huidige map: ${entry.name}"
+                        showFolderGallery(entry.uri, entry.name)
+                    }
                     label.setOnLongClickListener {
                         currentFolder.text = "Huidige map: ${entry.name}"
                         showFolderGallery(entry.uri, entry.name)
