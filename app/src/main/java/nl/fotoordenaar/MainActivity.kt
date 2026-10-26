@@ -568,126 +568,172 @@ class MainActivity : ComponentActivity() {
             return
         }
         val rootUri = rootDocumentUri(tree)
+        val currentFolder = TextView(this).apply {
+            text = "Huidige map: ${tree.lastPathSegment ?: "Fotomap"}"
+            textSize = 15f
+            setPadding(12, 10, 12, 10)
+            setTextColor(Color.rgb(15, 69, 122))
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(10, 8, 10, 8)
         }
         val scroll = ScrollView(this).apply { addView(content) }
-        val countCache = mutableMapOf<String, Pair<Int, Int>>()
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(currentFolder)
+        val allButton = Button(this).apply { text = "Alles uitklappen" }
+        root.addView(allButton)
+        root.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        val cache = java.util.concurrent.ConcurrentHashMap<String, List<ExplorerEntry>>()
+        val counts = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Int>>()
+        val labels = mutableMapOf<String, TextView>()
+        val opened = mutableSetOf<String>()
+        var expandAll = false
+        var generation = 0
 
-        // Iteratief tellen: geen kunstmatige limiet op mapdiepte of aantal foto's.
-        fun countDescendants(folder: Uri): Pair<Int, Int> {
-            countCache[folder.toString()]?.let { return it }
-            val visited = HashSet<String>()
+        fun sorted(entries: List<ExplorerEntry>): List<ExplorerEntry> =
+            entries.sortedWith(compareByDescending<ExplorerEntry> { it.isDirectory }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+
+        fun countTree() {
             val stack = java.util.ArrayDeque<Pair<Uri, Boolean>>()
-            stack.add(folder to false)
+            val visited = HashSet<String>()
+            stack.add(rootUri to false)
             while (!stack.isEmpty()) {
-                val (uri, processed) = stack.removeLast()
+                val (uri, done) = stack.removeLast()
                 val key = uri.toString()
-                if (processed) {
-                    var albums = 0
+                if (done) {
+                    var dirs = 0
                     var photos = 0
-                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
-                    for (entry in entries) {
+                    for (entry in cache[key].orEmpty()) {
                         if (entry.isDirectory) {
-                            albums++
-                            val child = countCache[entry.uri.toString()]
-                            if (child != null) {
-                                albums += child.first
-                                photos += child.second
+                            dirs++
+                            counts[entry.uri.toString()]?.let {
+                                dirs += it.first
+                                photos += it.second
                             }
                         } else if (isImageEntry(entry)) photos++
                     }
-                    countCache[key] = albums to photos
+                    counts[key] = dirs to photos
                 } else if (visited.add(key)) {
+                    val entries = try { sorted(explorerEntries(uri)) } catch (_: Exception) { emptyList() }
+                    cache[key] = entries
                     stack.add(uri to true)
-                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
-                    for (entry in entries) {
-                        if (entry.isDirectory && !countCache.containsKey(entry.uri.toString())) {
-                            stack.add(entry.uri to false)
+                    for (entry in entries) if (entry.isDirectory) stack.add(entry.uri to false)
+                }
+            }
+        }
+
+        fun caption(entry: ExplorerEntry, expanded: Boolean): String {
+            val c = counts[entry.uri.toString()]
+            val total = if (c == null) "(tellen…)" else "(${c.first} subalbums, ${c.second} foto's)"
+            return "${if (expanded) "▾ 📂" else "▸ 📁"}  ${entry.name} $total"
+        }
+
+        fun addLevel(parent: Uri, target: LinearLayout, depth: Int, all: Boolean) {
+            val entries = cache[parent.toString()]
+            if (entries == null) {
+                target.addView(TextView(this).apply {
+                    text = "Map wordt geladen…"
+                    setPadding(12, 8, 8, 8)
+                })
+                val requested = generation
+                worker.execute {
+                    val found = try { sorted(explorerEntries(parent)) } catch (_: Exception) { emptyList() }
+                    cache[parent.toString()] = found
+                    runOnUiThread {
+                        if (generation == requested) {
+                            target.removeAllViews()
+                            addLevel(parent, target, depth, all)
                         }
                     }
                 }
-            }
-            return countCache[folder.toString()] ?: (0 to 0)
-        }
-
-        fun addLevel(parent: Uri, target: LinearLayout, depth: Int) {
-            val entries = try { explorerEntries(parent) } catch (e: Exception) {
-                target.addView(TextView(this).apply {
-                    text = "Map niet leesbaar: ${e.message ?: "onbekende fout"}"
-                })
                 return
             }
-            if (entries.isEmpty()) {
-                target.addView(TextView(this).apply {
-                    text = "(lege map)"
-                    setPadding(16, 8, 8, 8)
-                })
-            }
+            if (entries.isEmpty()) target.addView(TextView(this).apply {
+                text = "(lege map)"
+                setPadding(12, 8, 8, 8)
+            })
             for (entry in entries) {
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(12, 4, 8, 4)
-                    setBackgroundColor(Color.rgb(239, 245, 251))
+                    setPadding(6, 2, 4, 2)
                 }
                 val label = TextView(this).apply {
-                    textSize = 14f
+                    textSize = 13f
                     setTextColor(Color.rgb(15, 69, 122))
-                    setPadding(10, 12, 8, 12)
+                    setPadding(6, 10, 6, 10)
+                    setBackgroundColor(Color.rgb(239, 245, 251))
                 }
                 row.addView(label, LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                ))
-                target.addView(row, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ))
+                target.addView(row)
                 if (entry.isDirectory) {
-                    val counts = countDescendants(entry.uri)
-                    val caption = "${entry.name} (${counts.first} subalbums, ${counts.second} foto's)"
+                    val key = entry.uri.toString()
                     val children = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
-                        visibility = View.GONE
                         setPadding(18, 0, 0, 0)
+                        visibility = if (all) View.VISIBLE else View.GONE
                     }
                     target.addView(children)
-                    label.text = "▸ 📁 $caption"
-                    label.setOnClickListener { showFolderGallery(entry.uri, entry.name) }
-                    val toggle = Button(this).apply {
-                        text = "＋"
-                        contentDescription = "Album uit- of inklappen"
-                        setOnClickListener {
-                            if (children.visibility == View.VISIBLE) {
-                                children.visibility = View.GONE
-                                text = "＋"
-                                label.text = "▸ 📁 $caption"
-                            } else {
-                                if (children.childCount == 0) addLevel(entry.uri, children, depth + 1)
-                                children.visibility = View.VISIBLE
-                                text = "−"
-                                label.text = "▾ 📂 $caption"
-                            }
-                        }
+                    if (all) opened.add(key)
+                    labels[key] = label
+                    label.text = caption(entry, all)
+                    label.setOnClickListener {
+                        currentFolder.text = "Huidige map: ${entry.name}"
+                        val expanded = children.visibility != View.VISIBLE
+                        children.visibility = if (expanded) View.VISIBLE else View.GONE
+                        if (expanded) {
+                            opened.add(key)
+                            if (children.childCount == 0) addLevel(entry.uri, children, depth + 1, false)
+                        } else opened.remove(key)
+                        label.text = caption(entry, expanded)
                     }
-                    row.addView(toggle)
+                    label.setOnLongClickListener {
+                        currentFolder.text = "Huidige map: ${entry.name}"
+                        showFolderGallery(entry.uri, entry.name)
+                        true
+                    }
+                    if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
-                    label.text = if (isImageEntry(entry)) "🖼 ${entry.name}  ›" else "📄 ${entry.name}"
+                    label.text = if (isImageEntry(entry)) "🖼  ${entry.name}  ›" else "📄  ${entry.name}"
                     if (isImageEntry(entry)) {
-                        row.setOnClickListener { showFullscreenPhoto(entry.uri, entry.name) }
+                        label.setOnClickListener {
+                            currentFolder.text = "Huidige map: ${entry.name}"
+                            showFullscreenPhoto(entry.uri, entry.name)
+                        }
                     }
                 }
             }
         }
 
-        content.addView(TextView(this).apply {
-            text = "Tik op een albumnaam voor de galerij; gebruik + of − om subalbums en foto's uit of in te klappen. Tik op een foto voor beeld, Metadata en Kaart."
-            textSize = 13f
-            setPadding(8, 4, 8, 16)
-        })
-        addLevel(rootUri, content, 0)
+        fun refresh(all: Boolean) {
+            generation++
+            labels.clear()
+            opened.clear()
+            content.removeAllViews()
+            addLevel(rootUri, content, 0, all)
+        }
+        allButton.setOnClickListener {
+            expandAll = !expandAll
+            allButton.text = if (expandAll) "Alles inklappen" else "Alles uitklappen"
+            refresh(expandAll)
+        }
+        content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("Foto-verkenner", scroll)
+        openFullScreen("Foto-verkenner", root)
+        // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
+        worker.execute {
+            countTree()
+            runOnUiThread {
+                refresh(false)
+            }
+        }
     }
 
     private fun formatFileSize(bytes: Long): String = when {
