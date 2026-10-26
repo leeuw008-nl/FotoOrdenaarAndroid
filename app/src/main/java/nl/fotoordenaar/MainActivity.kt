@@ -743,10 +743,6 @@ class MainActivity : ComponentActivity() {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         cellWidthPx - (8 * density).toInt()
                     )
-                    photoWorker.execute {
-                        val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
-                        runOnUiThread { if (parent != null) setImageBitmap(bitmap) }
-                    }
                     contentDescription = photo.name
                     setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo)) }
                 }
@@ -758,6 +754,14 @@ class MainActivity : ComponentActivity() {
                     setPadding(2, 2, 2, 4)
                 })
                 grid.addView(tile)
+                // Pas na toevoegen aan de layout laden: anders kan de callback
+                // al draaien terwijl thumb.parent nog null is.
+                photoWorker.execute {
+                    val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
+                    runOnUiThread {
+                        if (thumb.parent != null && bitmap != null) thumb.setImageBitmap(bitmap)
+                    }
+                }
             }
         }
         val holder = loading.parent as? ViewGroup
