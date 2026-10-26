@@ -471,7 +471,39 @@ class MainActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f
         ))
         selectTab(false)
+        val fullscreenButton = Button(this).apply { text = "⛶ Beeldvullend" }
+        root.addView(fullscreenButton)
+        var photoOnly = false
+        fullscreenButton.setOnClickListener {
+            photoOnly = !photoOnly
+            tabs.visibility = if (photoOnly) View.GONE else View.VISIBLE
+            tabBody.visibility = if (photoOnly) View.GONE else View.VISIBLE
+            for (index in 1 until root.childCount - 1) {
+                val child = root.getChildAt(index)
+                if (child !== tabs && child !== tabBody) child.visibility = if (photoOnly) View.GONE else View.VISIBLE
+            }
+            val params = image.layoutParams as LinearLayout.LayoutParams
+            params.weight = if (photoOnly) 1f else 0.9f
+            image.layoutParams = params
+            fullscreenButton.text = if (photoOnly) "Terug naar details" else "⛶ Beeldvullend"
+        }
         openFullScreen(name, root, dark = true)
+        if (album != null) {
+            photoWorker.execute {
+                val cached = cachedGpsCoordinates(name)
+                val exifCoords = if (cached == null) try { gpsCoordinates(readExif(uri)) } catch (_: Exception) { null } else null
+                val altCoords = if (cached == null && exifCoords == null) alternateGpsCoordinates(uri) else null
+                val xmpCoords = if (cached == null && exifCoords == null && altCoords == null) xmpGpsCoordinates(uri) else null
+                val coords = cached ?: exifCoords ?: altCoords ?: xmpCoords
+                runOnUiThread {
+                    if (root.parent != null && coords != null && !photoOnly) {
+                        mapLoaded = true
+                        selectTab(true)
+                        showMap(coords)
+                    }
+                }
+            }
+        }
         photoWorker.execute {
             val bitmap = try { loadSampledBitmap(uri, 2600) } catch (_: Exception) { null }
             runOnUiThread { if (!isFinishing) image.setImageBitmap(bitmap) }
