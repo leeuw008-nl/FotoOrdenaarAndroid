@@ -505,6 +505,14 @@ class MainActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f
         ))
         selectTab(false)
+        val galleryButton = TextView(this).apply {
+            text = "▦"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Open Gallery van dit album"
+        }
         val fullscreenButton = TextView(this).apply {
             text = if (photoOnlyState) "⤡" else "⛶"
             textSize = 26f
@@ -514,6 +522,7 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Beeldvullende foto aan of uit"
         }
         val iconSize = (46 * resources.displayMetrics.density).toInt()
+        filenameRow.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
         filenameRow.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
@@ -528,6 +537,15 @@ class MainActivity : ComponentActivity() {
             photoFrame.layoutParams = params
             fullscreenButton.text = if (photoOnlyState) "⤡" else "⛶"
             setPhotoToolbarOverlay(photoOnlyState)
+        }
+        galleryButton.setOnClickListener {
+            val photos = album ?: listOf(ExplorerEntry(uri, name, false, null))
+            val loading = TextView(this).apply {
+                text = "Gallery laden…"
+                setPadding(24, 24, 24, 24)
+            }
+            openFullScreen("Gallery", loading)
+            renderPhotoGrid(photos, loading)
         }
         fullscreenButton.setOnClickListener {
             photoOnlyState = !photoOnlyState
