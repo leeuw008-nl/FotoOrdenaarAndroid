@@ -120,13 +120,6 @@ class MainActivity : ComponentActivity() {
                     )
                 } catch (_: SecurityException) {}
                 status.text = "Fotomap geselecteerd. Tik op Verkenner openen."
-                if (Build.VERSION.SDK_INT >= 33 &&
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                    requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
-                } else if (Build.VERSION.SDK_INT >= 29 &&
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-                }
                 showExplorer(organizedOnly = false)
             }
         }
@@ -175,6 +168,13 @@ class MainActivity : ComponentActivity() {
         homeView = root
         setContentView(root)
         sourceTree?.let { status.text = "Eerder gekozen fotomap beschikbaar. Geen nieuwe maptoestemming nodig." }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+            requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
+        } else if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -744,7 +744,10 @@ class MainActivity : ComponentActivity() {
                         if (expanded) {
                             opened.add(key)
                             if (children.childCount == 0) addLevel(entry.uri, children, depth + 1, false)
-                        } else opened.remove(key)
+                        } else {
+                            opened.remove(key)
+                            children.removeAllViews()
+                        }
                         label.text = caption(entry, expanded)
                         arrow?.text = if (expanded) "▾" else "▸"
                     }
@@ -766,6 +769,7 @@ class MainActivity : ComponentActivity() {
                             currentFolder.text = "Huidige map: ${entry.name}"
                             if (children.visibility == View.VISIBLE && tag == true) {
                                 children.visibility = View.GONE
+                                children.removeAllViews()
                                 opened.remove(key)
                                 arrow?.text = "▸"
                                 tag = false
@@ -785,8 +789,20 @@ class MainActivity : ComponentActivity() {
                     ))
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
-                    label.text = if (isImageEntry(entry)) "🖼  ${entry.name}  ›" else "📄  ${entry.name}"
+                    val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
+                    val fileType = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
+                        .ifBlank { "bestand" }
+                    label.text = if (isImageEntry(entry))
+                        "🖼  ${entry.name}  —  $fileType  —  $sizeText  —  afmetingen laden…  ›"
+                    else "📄  ${entry.name}  —  $fileType  —  $sizeText"
                     if (isImageEntry(entry)) {
+                        worker.execute {
+                            val dimensions = imageDimensions(entry.uri) ?: "afmetingen onbekend"
+                            runOnUiThread {
+                                if (label.parent != null) label.text =
+                                    "🖼  ${entry.name}  —  $fileType  —  $sizeText  —  $dimensions  ›"
+                            }
+                        }
                         label.setOnClickListener {
                             currentFolder.text = "Huidige map: ${entry.name}"
                             showFullscreenPhoto(entry.uri, entry.name)
