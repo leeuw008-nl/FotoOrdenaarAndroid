@@ -582,6 +582,8 @@ class MainActivity : ComponentActivity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(currentFolder)
+        val homeButton = Button(this).apply { text = "⌂  Naar hoofdalbum" }
+        root.addView(homeButton)
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
         root.addView(scroll, LinearLayout.LayoutParams(
@@ -630,7 +632,7 @@ class MainActivity : ComponentActivity() {
         fun caption(entry: ExplorerEntry, expanded: Boolean): String {
             val c = counts[entry.uri.toString()]
             val total = if (c == null) "(tellen…)" else "(${c.first} subalbums, ${c.second} foto's)"
-            return "${if (expanded) "▾ 📂" else "▸ 📁"}  ${entry.name} $total"
+            return "📁  ${entry.name} $total"
         }
 
         fun addLevel(parent: Uri, target: LinearLayout, depth: Int, all: Boolean) {
@@ -669,8 +671,20 @@ class MainActivity : ComponentActivity() {
                     setPadding(6, 10, 6, 10)
                     setBackgroundColor(Color.rgb(239, 245, 251))
                 }
+                val arrow = if (entry.isDirectory) TextView(this).apply {
+                    text = if (all) "▾" else "▸"
+                    textSize = 27f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.rgb(15, 69, 122))
+                    setBackgroundColor(Color.rgb(225, 237, 250))
+                    contentDescription = "Album uit- of inklappen"
+                } else null
+                if (arrow != null) row.addView(arrow, LinearLayout.LayoutParams(
+                    (54 * resources.displayMetrics.density).toInt(),
+                    (48 * resources.displayMetrics.density).toInt()
+                ))
                 row.addView(label, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
                 ))
                 target.addView(row)
                 if (entry.isDirectory) {
@@ -685,7 +699,7 @@ class MainActivity : ComponentActivity() {
                     labels[key] = label
                     label.tag = entry.name
                     label.text = caption(entry, all)
-                    label.setOnClickListener {
+                    val toggleAlbum = {
                         currentFolder.text = "Huidige map: ${entry.name}"
                         val expanded = children.visibility != View.VISIBLE
                         children.visibility = if (expanded) View.VISIBLE else View.GONE
@@ -694,12 +708,28 @@ class MainActivity : ComponentActivity() {
                             if (children.childCount == 0) addLevel(entry.uri, children, depth + 1, false)
                         } else opened.remove(key)
                         label.text = caption(entry, expanded)
+                        arrow?.text = if (expanded) "▾" else "▸"
                     }
+                    arrow?.setOnClickListener { toggleAlbum() }
+                    label.setOnClickListener { toggleAlbum() }
                     label.setOnLongClickListener {
                         currentFolder.text = "Huidige map: ${entry.name}"
                         showFolderGallery(entry.uri, entry.name)
                         true
                     }
+                    val subtreeButton = Button(this).apply {
+                        text = "Alles vanaf hier ▾"
+                        textSize = 11f
+                        setOnClickListener {
+                            currentFolder.text = "Huidige map: ${entry.name}"
+                            children.removeAllViews()
+                            children.visibility = View.VISIBLE
+                            opened.add(key)
+                            arrow?.text = "▾"
+                            addLevel(entry.uri, children, depth + 1, true)
+                        }
+                    }
+                    row.addView(subtreeButton)
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
                     label.text = if (isImageEntry(entry)) "🖼  ${entry.name}  ›" else "📄  ${entry.name}"
@@ -719,6 +749,13 @@ class MainActivity : ComponentActivity() {
             opened.clear()
             content.removeAllViews()
             addLevel(rootUri, content, 0, all)
+        }
+        homeButton.setOnClickListener {
+            currentFolder.text = "Huidige map: ${tree.lastPathSegment ?: "Fotomap"}"
+            expandAll = false
+            allButton.text = "Alles uitklappen"
+            refresh(false)
+            scroll.smoothScrollTo(0, 0)
         }
         allButton.setOnClickListener {
             expandAll = !expandAll
@@ -740,7 +777,7 @@ class MainActivity : ComponentActivity() {
                     val entryName = label.tag as? String ?: continue
                     val c = counts[key] ?: continue
                     val isExpanded = opened.contains(key)
-                    label.text = "${if (isExpanded) "▾ 📂" else "▸ 📁"}  $entryName (${c.first} subalbums, ${c.second} foto's)"
+                    label.text = "📁  $entryName (${c.first} subalbums, ${c.second} foto's)"
                 }
             }
         }
