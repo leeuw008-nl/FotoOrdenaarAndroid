@@ -1,12 +1,12 @@
 
-name: Build FotoOrdenaar APK
+name: Build Foto-verkenner APK
 
 'on':
   workflow_dispatch:
   push:
     branches:
       - main
-      - fix/gps-xmp-diagnostics
+      - foto-verkenner-standalone
 
 jobs:
   build:
@@ -39,7 +39,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FotoOrdenaar-debug-apk
+          name: Foto-verkenner-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
