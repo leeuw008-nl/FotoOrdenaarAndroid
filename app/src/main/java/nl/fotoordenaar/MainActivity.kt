@@ -300,6 +300,32 @@ class MainActivity : ComponentActivity() {
         setContentView(page)
     }
 
+    private fun setPhotoToolbarOverlay(enabled: Boolean) {
+        val page = screenStack.lastOrNull() as? LinearLayout ?: return
+        if (enabled) {
+            if (page.childCount != 2) return
+            val toolbar = page.getChildAt(0)
+            val body = page.getChildAt(1)
+            page.removeAllViews()
+            val overlay = FrameLayout(this)
+            overlay.addView(body, FrameLayout.LayoutParams(-1, -1))
+            overlay.addView(toolbar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+            toolbar.setBackgroundColor(Color.argb(145, 0, 0, 0))
+            page.addView(overlay, LinearLayout.LayoutParams(-1, 0, 1f))
+        } else {
+            if (page.childCount != 1) return
+            val overlay = page.getChildAt(0) as? FrameLayout ?: return
+            if (overlay.childCount != 2) return
+            val body = overlay.getChildAt(0)
+            val toolbar = overlay.getChildAt(1)
+            overlay.removeAllViews()
+            page.removeAllViews()
+            toolbar.setBackgroundColor(Color.BLACK)
+            page.addView(toolbar, LinearLayout.LayoutParams(-1, -2))
+            page.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+    }
+
     private fun closeFullScreen() {
         if (screenStack.isNotEmpty()) screenStack.removeAt(screenStack.lastIndex)
         val previous = screenStack.lastOrNull() ?: homeView
@@ -501,13 +527,14 @@ class MainActivity : ComponentActivity() {
             params.weight = if (photoOnlyState) 1f else 0.9f
             photoFrame.layoutParams = params
             fullscreenButton.text = if (photoOnlyState) "⤡" else "⛶"
+            setPhotoToolbarOverlay(photoOnlyState)
         }
         fullscreenButton.setOnClickListener {
             photoOnlyState = !photoOnlyState
             applyPhotoMode()
         }
-        applyPhotoMode()
         openFullScreen(name, root, dark = true)
+        applyPhotoMode()
         if (album != null) {
             photoWorker.execute {
                 val cached = cachedGpsCoordinates(name)
