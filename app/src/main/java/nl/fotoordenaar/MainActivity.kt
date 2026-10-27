@@ -37,6 +37,7 @@ import android.widget.GridLayout
 import android.widget.FrameLayout
 import android.widget.EditText
 import android.widget.CheckBox
+import android.util.LruCache
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.graphics.Bitmap
@@ -74,6 +75,13 @@ class MainActivity : ComponentActivity() {
     private val viewerWorker = Executors.newFixedThreadPool(2)
     private val galleryThumbWorker = Executors.newFixedThreadPool(4)
     private val dimensionWorker = Executors.newSingleThreadExecutor()
+    // Tijdelijke albumindex en miniaturen blijven beschikbaar bij opnieuw openen.
+    // Android mag de bitmapcache automatisch begrenzen op maximaal 32 MiB.
+    private val albumCache = mutableMapOf<String, List<ExplorerEntry>>()
+    private val thumbnailCache = object : LruCache<String, Bitmap>(32 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
+    }
+
     private var homeView: View? = null
     private val screenStack = mutableListOf<View>()
 
@@ -743,6 +751,11 @@ class MainActivity : ComponentActivity() {
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
         val loading = TextView(this).apply { text = "Gallery laden…"; textSize = 16f; setPadding(24,24,24,24) }
         openFullScreen(folderName, loading)
+        val cached = albumCache[folderUri.toString()]
+        if (cached != null) {
+            renderPhotoGrid(cached, loading)
+            return
+        }
         photoWorker.execute {
         val photos = mutableListOf<ExplorerEntry>()
         val visited = HashSet<String>()
@@ -759,6 +772,7 @@ class MainActivity : ComponentActivity() {
         }
         runOnUiThread {
         if (loading.parent == null) return@runOnUiThread
+        albumCache[folderUri.toString()] = photos.toList()
         renderPhotoGrid(photos, loading)
         }
         }
@@ -915,10 +929,19 @@ class MainActivity : ComponentActivity() {
                 grid.addView(tile)
                 // Nieuwe Gallery krijgt een eigen thumbnail-wachtrij. Eerdere albums
                 // mogen de nieuwe thumbnails niet blokkeren.
-                galleryThumbWorker.execute {
-                    val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
-                    runOnUiThread {
-                        if (!isFinishing && bitmap != null) thumb.setImageBitmap(bitmap)
+                val thumbKey = photo.uri.toString()
+                val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
+                if (cachedThumb != null) {
+                    thumb.setImageBitmap(cachedThumb)
+                } else {
+                    galleryThumbWorker.execute {
+                        val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
+                        if (bitmap != null) synchronized(thumbnailCache) {
+                            thumbnailCache.put(thumbKey, bitmap)
+                        }
+                        runOnUiThread {
+                            if (!isFinishing && bitmap != null && thumb.parent != null) thumb.setImageBitmap(bitmap)
+                        }
                     }
                 }
             }
