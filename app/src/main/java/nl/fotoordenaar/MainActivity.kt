@@ -52,6 +52,7 @@ import com.drew.metadata.exif.GpsDirectory
 import com.drew.metadata.exif.ExifSubIFDDirectory
 import com.drew.metadata.exif.ExifIFD0Directory
 import java.io.File
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -80,8 +81,37 @@ class MainActivity : ComponentActivity() {
     // Tijdelijke albumindex en miniaturen blijven beschikbaar bij opnieuw openen.
     // Android mag de bitmapcache automatisch begrenzen op maximaal 32 MiB.
     private val albumCache = mutableMapOf<String, List<ExplorerEntry>>()
-    // Hergebruik de bestaande Gallery inclusief ImageViews en reeds getoonde miniaturen.
-    private val galleryViewCache = mutableMapOf<String, View>()
+    // Miniaturen worden tevens op schijf gecachet, zodat geheugenverlies geen
+    // lege Gallery oplevert. Originele foto's blijven ongewijzigd.
+    private fun thumbnailFile(uri: Uri): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(uri.toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val folder = File(cacheDir, "gallery_thumbnails")
+        if (!folder.exists()) folder.mkdirs()
+        return File(folder, "$key.jpg")
+    }
+
+    private fun galleryThumbnail(uri: Uri): Bitmap? {
+        val file = thumbnailFile(uri)
+        if (file.isFile) {
+            val cached = try { BitmapFactory.decodeFile(file.absolutePath) } catch (_: Exception) { null }
+            if (cached != null) return cached
+            file.delete()
+        }
+        val source = loadSampledBitmap(uri, 350) ?: return null
+        // Bewaar een kleine thumbnail, niet de mogelijk veel grotere decode-bitmap.
+        val ratio = minOf(1f, 350f / maxOf(source.width, source.height).coerceAtLeast(1))
+        val thumb = if (ratio < 1f) Bitmap.createScaledBitmap(source,
+            (source.width * ratio).toInt().coerceAtLeast(1),
+            (source.height * ratio).toInt().coerceAtLeast(1), true) else source
+        try {
+            val temp = File(file.parentFile, file.name + ".tmp")
+            temp.outputStream().use { thumb.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            if (!temp.renameTo(file)) temp.delete()
+        } catch (_: Exception) { /* Miniatuur blijft in geheugen beschikbaar. */ }
+        return thumb
+    }
     private val thumbnailCache = object : LruCache<String, Bitmap>(32 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
     }
@@ -743,14 +773,6 @@ class MainActivity : ComponentActivity() {
 
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
         val cacheKey = folderUri.toString()
-        val existingGallery = galleryViewCache[cacheKey]
-        if (existingGallery != null) {
-            // Na Terug hangt de Gallery nog aan de oude (niet zichtbare) pagina.
-            // Loskoppelen en dezelfde View direct opnieuw tonen voorkomt lege thumbnails.
-            (existingGallery.parent as? ViewGroup)?.removeView(existingGallery)
-            openFullScreen(folderName, existingGallery)
-            return
-        }
         val loading = TextView(this).apply { text = "Gallery laden…"; textSize = 16f; setPadding(24,24,24,24) }
         openFullScreen(folderName, loading)
         val cached = albumCache[folderUri.toString()]
@@ -758,7 +780,7 @@ class MainActivity : ComponentActivity() {
             // Het nieuwe Gallery-scherm moet eerst gekoppeld zijn voordat
             // de miniaturen worden geplaatst (ook bij een cache-hit).
             loading.post {
-                if (loading.parent != null) renderPhotoGrid(cached, loading, cacheKey)
+                if (loading.parent != null) renderPhotoGrid(cached, loading)
             }
             return
         }
@@ -779,7 +801,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
         if (loading.parent == null) return@runOnUiThread
         albumCache[folderUri.toString()] = photos.toList()
-        renderPhotoGrid(photos, loading, cacheKey)
+        renderPhotoGrid(photos, loading)
         }
         }
     }
@@ -870,7 +892,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView, galleryCacheKey: String? = null) {
+    private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
         val screenWidthDp = (screenWidthPx / density).toInt()
@@ -943,7 +965,7 @@ class MainActivity : ComponentActivity() {
                     thumb.setImageBitmap(cachedThumb)
                 } else {
                     galleryThumbWorker.execute {
-                        val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
+                        val bitmap = try { galleryThumbnail(photo.uri) } catch (_: Exception) { null }
                         if (bitmap != null) synchronized(thumbnailCache) {
                             thumbnailCache.put(thumbKey, bitmap)
                         }
@@ -985,7 +1007,6 @@ class MainActivity : ComponentActivity() {
         }
         val holder = loading.parent as? ViewGroup
         holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(galleryPage, index, ViewGroup.LayoutParams(-1,-1)) }
-        if (galleryCacheKey != null && galleryPage.parent != null) galleryViewCache[galleryCacheKey] = galleryPage
     }
 
     private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
