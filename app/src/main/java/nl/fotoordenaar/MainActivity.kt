@@ -927,11 +927,9 @@ class MainActivity : ComponentActivity() {
                 val thumbKey = photo.uri.toString()
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
                 if (cachedThumb != null && !cachedThumb.isRecycled) {
-                    thumb.post {
-                        if (thumb.parent != null && !cachedThumb.isRecycled) {
-                            thumb.setImageBitmap(cachedThumb)
-                        }
-                    }
+                    // Direct instellen: ImageView bewaart de drawable ook voordat
+                    // het nieuwe Gallery-scherm aan het venster hangt.
+                    thumb.setImageBitmap(cachedThumb)
                 } else {
                     galleryThumbWorker.execute {
                         val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
@@ -940,9 +938,9 @@ class MainActivity : ComponentActivity() {
                         }
                         runOnUiThread {
                             if (!isFinishing && bitmap != null && !bitmap.isRecycled) {
-                                thumb.post {
-                                    if (thumb.parent != null && !bitmap.isRecycled) thumb.setImageBitmap(bitmap)
-                                }
+                                // Niet wachten op View.post(): bij snel teruggaan
+                                // en opnieuw openen kan die callback verloren gaan.
+                                thumb.setImageBitmap(bitmap)
                             }
                         }
                     }
