@@ -920,7 +920,7 @@ class MainActivity : ComponentActivity() {
                 // mogen de nieuwe thumbnails niet blokkeren.
                 val thumbKey = photo.uri.toString()
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
-                if (cachedThumb != null) {
+                if (cachedThumb != null && !cachedThumb.isRecycled) {
                     thumb.setImageBitmap(cachedThumb)
                 } else {
                     galleryThumbWorker.execute {
@@ -929,7 +929,11 @@ class MainActivity : ComponentActivity() {
                             thumbnailCache.put(thumbKey, bitmap)
                         }
                         runOnUiThread {
-                            if (!isFinishing && bitmap != null && thumb.parent != null) thumb.setImageBitmap(bitmap)
+                            if (!isFinishing && bitmap != null && !bitmap.isRecycled) {
+                                // Een thumbnail kan al klaar zijn voordat het nieuwe album
+                                // aan het scherm hangt; stel hem altijd in op zijn ImageView.
+                                thumb.setImageBitmap(bitmap)
+                            }
                         }
                     }
                 }
