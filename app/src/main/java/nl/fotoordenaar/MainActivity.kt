@@ -163,75 +163,86 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 sourceTree = uri
-                getSharedPreferences("foto_verkenner", MODE_PRIVATE)
-                    .edit().putString("selected_tree", uri.toString()).apply()
-                try {
-                    contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
-                } catch (_: SecurityException) {}
-                status.text = "Fotomap geselecteerd. Tik op Verkenner openen."
-                showExplorer(organizedOnly = false)
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
+                previewReady = false
+                previewPlans = null
+                previewButton.backgroundTintList = null
+                previewButton.text = "2. Voorbeeld bekijken"
+                moveButton.backgroundTintList = null
+                moveButton.text = "3. Foto's verplaatsen"
+                status.text = "Bronmap gekozen.\n\nKies eerst ‘Voorbeeld bekijken’."
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sourceTree = savedInstanceState?.getString("sourceTree")?.let(Uri::parse)
-            ?: getSharedPreferences("foto_verkenner", MODE_PRIVATE)
-                .getString("selected_tree", null)?.let(Uri::parse)
-        if (sourceTree != null && contentResolver.persistedUriPermissions.none {
-                it.uri == sourceTree && it.isReadPermission
-            }) {
-            sourceTree = null
-            getSharedPreferences("foto_verkenner", MODE_PRIVATE)
-                .edit().remove("selected_tree").apply()
-        }
+        explorerOpen = savedInstanceState?.getBoolean("explorerOpen") ?: false
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20, 24, 20, 20)
+            setPadding(36, 36, 36, 24)
         }
+
         root.addView(TextView(this).apply {
-            text = "Foto-verkenner"
-            textSize = 24f
+            text = "FotoOrdenaar"
+            textSize = 23f
         })
+
         status = TextView(this).apply {
-            text = "Kies een fotomap om albums, galerij, metadata en kaart te bekijken."
-            textSize = 15f
-            setPadding(4, 20, 4, 20)
+            textSize = 14f
+            text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
+            setPadding(0, 24, 0, 24)
+            // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
+            setTextIsSelectable(true)
         }
-        root.addView(status)
+
+        val scroll = ScrollView(this).apply {
+            addView(status)
+        }
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        )
+
         sourceButton = Button(this).apply {
-            text = "Fotomap kiezen"
-            setOnClickListener {
-                val existing = sourceTree
-                if (existing != null) showExplorer(organizedOnly = false)
-                else pickFolder.launch(null)
-            }
+            text = "1. Bronmap kiezen"
+            setOnClickListener { pickFolder.launch(null) }
         }
         root.addView(sourceButton)
-        previewButton = Button(this)
-        moveButton = Button(this)
+
+        previewButton = Button(this).apply {
+            text = "2. Voorbeeld bekijken"
+            setOnClickListener { previewFiles() }
+        }
+        root.addView(previewButton)
+
+        moveButton = Button(this).apply {
+            text = "3. Foto's verplaatsen"
+            setOnClickListener { confirmAndRun() }
+        }
+        root.addView(moveButton)
+
         root.addView(Button(this).apply {
-            text = "Verkenner openen"
+            text = "FotoVerkenner openen"
             setOnClickListener { showExplorer(organizedOnly = false) }
         })
+
         homeView = root
         setContentView(root)
-        sourceTree?.let { status.text = "Eerder gekozen fotomap beschikbaar. Geen nieuwe maptoestemming nodig." }
-        // Hoogstens eenmaal vragen, nooit bij openen van albums of foto's.
-        val permissionPrefs = getSharedPreferences("foto_verkenner", MODE_PRIVATE)
-        if (!permissionPrefs.getBoolean("media_permissions_asked", false)) {
-            permissionPrefs.edit().putBoolean("media_permissions_asked", true).apply()
-            val imagePermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
-                else Manifest.permission.READ_EXTERNAL_STORAGE
-            if (Build.VERSION.SDK_INT >= 29 &&
-                ContextCompat.checkSelfPermission(this, imagePermission) != PackageManager.PERMISSION_GRANTED) {
-                requestReadImages.launch(imagePermission)
-            } else if (Build.VERSION.SDK_INT >= 29 &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-            }
+        sourceTree?.let {
+            sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
+            status.text = "Eerder gekozen bronmap hersteld. Je kunt het resultaat opnieuw bekijken."
+        }
+        if (explorerOpen) {
+            root.post { showExplorer(organizedOnly = true) }
         }
     }
 
