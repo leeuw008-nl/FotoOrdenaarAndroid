@@ -74,6 +74,8 @@ class MainActivity : ComponentActivity() {
     private val photoWorker = Executors.newFixedThreadPool(2)
     private val viewerWorker = Executors.newFixedThreadPool(2)
     private val galleryThumbWorker = Executors.newFixedThreadPool(4)
+    // Albumkaart scant veel bestanden; mag GPS-uitlezing van een geopende foto niet blokkeren.
+    private val albumMapWorker = Executors.newSingleThreadExecutor()
     private val dimensionWorker = Executors.newSingleThreadExecutor()
     // Tijdelijke albumindex en miniaturen blijven beschikbaar bij opnieuw openen.
     // Android mag de bitmapcache automatisch begrenzen op maximaal 32 MiB.
@@ -779,7 +781,7 @@ class MainActivity : ComponentActivity() {
         }
         holder.addView(status)
         // Apart van het renderen van foto's: de bestaande GPS-methoden blijven ongewijzigd.
-        photoWorker.execute {
+        albumMapWorker.execute {
             val pins = mutableListOf<Triple<Int, Double, Double>>()
             photos.forEachIndexed { index, photo ->
                 val coords = try {
