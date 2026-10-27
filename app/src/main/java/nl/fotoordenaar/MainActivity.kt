@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 if (Build.VERSION.SDK_INT >= 29 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                else if (sourceTree != null) previewFiles()
             } else {
                 status.text = "Fototoegang ontbreekt. GPS-locaties zijn mogelijk niet leesbaar."
             }
@@ -154,6 +155,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 status.text = "Toegang tot originele GPS-metadata verleend."
+                if (sourceTree != null) previewFiles()
             } else {
                 status.text = "GPS-toestemming ontbreekt. Android kan locatiegegevens afschermen."
             }
@@ -1999,6 +2001,22 @@ class MainActivity : ComponentActivity() {
             status.text = "Kies eerst een bronmap."
             return
         }
+        // Android kan GPS uit de foto maskeren zonder mediatoestemmingen.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+            requestReadImages.launch(Manifest.permission.READ_MEDIA_IMAGES)
+            return
+        }
+        if (Build.VERSION.SDK_INT in 29..32 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestReadImages.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            return
+        }
         previewReady = false
         setButtonProgress(previewButton, 0)
         previewButton.text = "2. FOTO'S ANALYSEREN — 0%"
@@ -2113,7 +2131,9 @@ class MainActivity : ComponentActivity() {
                         targetName
                     ) ?: throw IllegalStateException("Kon doelbestand niet maken")
 
-                    contentResolver.openInputStream(p.source).use { input ->
+                    // Lees bij GPS-foto's de originele MediaStore-bytes.
+                    val copyUri = if (p.coords != null) originalMediaUri(p.source) else p.source
+                    contentResolver.openInputStream(copyUri).use { input ->
                         contentResolver.openOutputStream(target, "w").use { output ->
                             if (input == null || output == null) {
                                 throw IllegalStateException("Bestand niet toegankelijk")
@@ -2123,6 +2143,16 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Verwijder het origineel pas als GPS ook in het doelbestand leesbaar is.
+                    if (p.coords != null) {
+                        val copiedGps = gpsCoordinates(readExif(target))
+                            ?: alternateGpsCoordinates(target)
+                        if (copiedGps == null ||
+                            kotlin.math.abs(copiedGps[0] - p.coords[0]) > 0.0001 ||
+                            kotlin.math.abs(copiedGps[1] - p.coords[1]) > 0.0001) {
+                            throw IllegalStateException("GPS-controle mislukt; origineel behouden")
+                        }
+                    }
                     if (!DocumentsContract.deleteDocument(contentResolver, p.source)) {
                         throw IllegalStateException(
                             "Kopie gemaakt, maar origineel niet verwijderd"
