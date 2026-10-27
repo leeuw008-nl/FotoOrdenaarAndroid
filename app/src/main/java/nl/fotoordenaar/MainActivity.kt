@@ -36,6 +36,7 @@ import android.widget.ImageView
 import android.widget.GridLayout
 import android.widget.FrameLayout
 import android.widget.EditText
+import android.widget.CheckBox
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.graphics.Bitmap
@@ -763,6 +764,92 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun showAlbumMap(photos: List<ExplorerEntry>, holder: FrameLayout) {
+        holder.removeAllViews()
+        val status = TextView(this).apply {
+            text = "GPS-locaties zoeken… 0 / ${photos.size}"
+            setPadding(18, 18, 18, 18)
+        }
+        holder.addView(status)
+        // Apart van het renderen van foto's: de bestaande GPS-methoden blijven ongewijzigd.
+        photoWorker.execute {
+            val pins = mutableListOf<Triple<Int, Double, Double>>()
+            photos.forEachIndexed { index, photo ->
+                val coords = try {
+                    cachedGpsCoordinates(photo.name)
+                        ?: gpsCoordinates(readExif(photo.uri))
+                        ?: alternateGpsCoordinates(photo.uri)
+                        ?: xmpGpsCoordinates(photo.uri)
+                } catch (_: Exception) { null }
+                if (coords != null && coords.size >= 2 && coords[0].isFinite() && coords[1].isFinite() &&
+                    coords[0] in -90.0..90.0 && coords[1] in -180.0..180.0 &&
+                    (coords[0] != 0.0 || coords[1] != 0.0)) {
+                    pins.add(Triple(index, coords[0], coords[1]))
+                }
+                if ((index + 1) % 20 == 0 || index == photos.lastIndex) {
+                    runOnUiThread {
+                        if (status.parent != null) status.text =
+                            "GPS-locaties zoeken… ${index + 1} / ${photos.size}"
+                    }
+                }
+            }
+            runOnUiThread {
+                if (holder.parent == null) return@runOnUiThread
+                holder.removeAllViews()
+                if (pins.isEmpty()) {
+                    holder.addView(TextView(this).apply {
+                        text = "Geen GPS-coördinaten gevonden in dit album."
+                        setPadding(18, 18, 18, 18)
+                    })
+                    return@runOnUiThread
+                }
+                val points = pins.joinToString(",") { (index, lat, lon) ->
+                    "[${index},${lat},${lon}]"
+                }
+                val html = """
+                    <!doctype html><html><head><meta name="viewport"
+                    content="width=device-width, initial-scale=1, maximum-scale=1">
+                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+                    <style>html,body,#map{height:100%;margin:0} .leaflet-popup-content{font:15px sans-serif}</style>
+                    </head><body><div id="map"></div>
+                    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                    <script>
+                    const points=[$points];
+                    const map=L.map('map');
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      {maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+                    const bounds=[];
+                    points.forEach(p=>{
+                      const marker=L.marker([p[1],p[2]]).addTo(map);
+                      marker.bindPopup('<a href="fotoalbum://open/'+p[0]+'">Open foto '+(p[0]+1)+'</a>');
+                      bounds.push([p[1],p[2]]);
+                    });
+                    map.fitBounds(bounds,{padding:[30,30],maxZoom:15});
+                    </script></body></html>
+                """.trimIndent()
+                val web = WebView(this).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                            if (url?.startsWith("fotoalbum://open/") == true) {
+                                val index = url.substringAfterLast('/').toIntOrNull()
+                                if (index != null && index in photos.indices) {
+                                    showFullscreenPhoto(photos[index].uri, photos[index].name,
+                                        photos, index, fromGallery = true)
+                                }
+                                return true
+                            }
+                            return false
+                        }
+                    }
+                    loadDataWithBaseURL("https://unpkg.com/", html, "text/html", "UTF-8", null)
+                }
+                holder.addView(web, FrameLayout.LayoutParams(-1, -1))
+            }
+        }
+    }
+
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
@@ -836,8 +923,33 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        val galleryBody = FrameLayout(this)
+        galleryBody.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        val mapBody = FrameLayout(this)
+        val mapToggle = CheckBox(this).apply {
+            text = "Kaartweergave (alle GPS-spelden)"
+            setPadding(12, 2, 12, 2)
+        }
+        val galleryPage = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
+            addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+        var mapStarted = false
+        mapToggle.setOnCheckedChangeListener { _, checked ->
+            galleryBody.visibility = if (checked) View.GONE else View.VISIBLE
+            if (checked) {
+                if (mapBody.parent == null) galleryPage.addView(mapBody,
+                    LinearLayout.LayoutParams(-1, 0, 1f))
+                mapBody.visibility = View.VISIBLE
+                if (!mapStarted) {
+                    mapStarted = true
+                    showAlbumMap(photos, mapBody)
+                }
+            } else mapBody.visibility = View.GONE
+        }
         val holder = loading.parent as? ViewGroup
-        holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(scroll, index, ViewGroup.LayoutParams(-1,-1)) }
+        holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(galleryPage, index, ViewGroup.LayoutParams(-1,-1)) }
     }
 
     private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
