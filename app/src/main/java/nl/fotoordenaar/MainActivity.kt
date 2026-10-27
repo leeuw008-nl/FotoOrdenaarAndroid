@@ -839,7 +839,7 @@ class MainActivity : ComponentActivity() {
                     (coords[0] != 0.0 || coords[1] != 0.0)) {
                     pins.add(Triple(index, coords[0], coords[1]))
                 }
-                if ((index + 1) % 20 == 0 || index == photos.lastIndex) {
+                if (index < 10 || (index + 1) % 10 == 0 || index == photos.lastIndex) {
                     runOnUiThread {
                         if (status.parent != null) status.text =
                             "GPS-locaties zoeken… ${index + 1} / ${photos.size}"
@@ -1474,7 +1474,9 @@ class MainActivity : ComponentActivity() {
     private fun readExif(uri: Uri): ExifInterface? {
         // Eerst de expliciet geselecteerde SAF-foto proberen; originele
         // MediaStore-toegang kan zonder extra permissie SecurityException geven.
-        val candidates = listOf(uri, originalMediaUri(uri)).distinct()
+        // Originele MediaStore-stream eerst: SAF kan GPS-tags door Android maskeren.
+        val original = originalMediaUri(uri)
+        val candidates = listOf(original, uri).distinct()
         for (candidate in candidates) {
             try {
                 contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
