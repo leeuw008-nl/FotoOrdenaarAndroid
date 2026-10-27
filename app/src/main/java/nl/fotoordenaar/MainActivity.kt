@@ -742,7 +742,11 @@ class MainActivity : ComponentActivity() {
         openFullScreen(folderName, loading)
         val cached = albumCache[folderUri.toString()]
         if (cached != null) {
-            renderPhotoGrid(cached, loading)
+            // Het nieuwe Gallery-scherm moet eerst gekoppeld zijn voordat
+            // de miniaturen worden geplaatst (ook bij een cache-hit).
+            loading.post {
+                if (loading.parent != null) renderPhotoGrid(cached, loading)
+            }
             return
         }
         photoWorker.execute {
@@ -921,7 +925,11 @@ class MainActivity : ComponentActivity() {
                 val thumbKey = photo.uri.toString()
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
                 if (cachedThumb != null && !cachedThumb.isRecycled) {
-                    thumb.setImageBitmap(cachedThumb)
+                    thumb.post {
+                        if (thumb.parent != null && !cachedThumb.isRecycled) {
+                            thumb.setImageBitmap(cachedThumb)
+                        }
+                    }
                 } else {
                     galleryThumbWorker.execute {
                         val bitmap = try { loadSampledBitmap(photo.uri, 350) } catch (_: Exception) { null }
@@ -930,9 +938,9 @@ class MainActivity : ComponentActivity() {
                         }
                         runOnUiThread {
                             if (!isFinishing && bitmap != null && !bitmap.isRecycled) {
-                                // Een thumbnail kan al klaar zijn voordat het nieuwe album
-                                // aan het scherm hangt; stel hem altijd in op zijn ImageView.
-                                thumb.setImageBitmap(bitmap)
+                                thumb.post {
+                                    if (thumb.parent != null && !bitmap.isRecycled) thumb.setImageBitmap(bitmap)
+                                }
                             }
                         }
                     }
