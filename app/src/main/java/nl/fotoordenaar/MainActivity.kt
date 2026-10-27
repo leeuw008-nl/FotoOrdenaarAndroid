@@ -26,6 +26,7 @@ import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.view.View
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.widget.ProgressBar
 import android.widget.Button
 import android.widget.LinearLayout
@@ -353,22 +354,74 @@ class MainActivity : ComponentActivity() {
             setImageDrawable(null)
             contentDescription = "Foto laden…"
         }
-        if (album != null && album.size > 1) {
-            var touchX = 0f
-            image.setOnTouchListener { _, event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { touchX = event.x; true }
-                    MotionEvent.ACTION_UP -> {
-                        val next = (position + if (event.x - touchX < 0) 1 else -1).coerceIn(0, album.lastIndex)
-                        if (kotlin.math.abs(event.x - touchX) > 75 * resources.displayMetrics.density && next != position) {
-                            closeFullScreen()
-                            showFullscreenPhoto(album[next].uri, album[next].name, album, next, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
-                        }
-                        true
+        // Zoom uitsluitend als visuele transformatie op de ImageView:
+        // de bestaande FIT_CENTER, metadata, GPS en kaart blijven ongemoeid.
+        var zoomFactor = 1f
+        var maxZoomFactor = 1f
+        var gestureX = 0f
+        var gestureY = 0f
+        var previousX = 0f
+        var previousY = 0f
+        var pinched = false
+        fun limitPan() {
+            val maxX = (image.width * (zoomFactor - 1f) / 2f).coerceAtLeast(0f)
+            val maxY = (image.height * (zoomFactor - 1f) / 2f).coerceAtLeast(0f)
+            image.translationX = image.translationX.coerceIn(-maxX, maxX)
+            image.translationY = image.translationY.coerceIn(-maxY, maxY)
+        }
+        fun resetPhotoZoom() {
+            zoomFactor = 1f
+            image.scaleX = 1f
+            image.scaleY = 1f
+            image.translationX = 0f
+            image.translationY = 0f
+        }
+        val pinchDetector = ScaleGestureDetector(this,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    if (!photoOnlyState) return false
+                    zoomFactor = (zoomFactor * detector.scaleFactor).coerceIn(1f, maxZoomFactor)
+                    image.scaleX = zoomFactor
+                    image.scaleY = zoomFactor
+                    limitPan()
+                    return true
+                }
+            })
+        image.setOnTouchListener { _, event ->
+            if (photoOnlyState) pinchDetector.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    gestureX = event.x
+                    gestureY = event.y
+                    previousX = event.x
+                    previousY = event.y
+                    pinched = false
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> pinched = true
+                MotionEvent.ACTION_MOVE -> {
+                    if (photoOnlyState && event.pointerCount == 1 &&
+                        zoomFactor > 1.01f && !pinchDetector.isInProgress) {
+                        image.translationX += event.x - previousX
+                        image.translationY += event.y - previousY
+                        limitPan()
                     }
-                    else -> true
+                    previousX = event.x
+                    previousY = event.y
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!pinched && (!photoOnlyState || zoomFactor <= 1.01f) &&
+                        album != null && album.size > 1) {
+                        val delta = event.x - gestureX
+                        val next = (position + if (delta < 0f) 1 else -1).coerceIn(0, album.lastIndex)
+                        if (kotlin.math.abs(delta) > 75 * resources.displayMetrics.density && next != position) {
+                            closeFullScreen()
+                            showFullscreenPhoto(album[next].uri, album[next].name, album, next,
+                                startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
+                        }
+                    }
                 }
             }
+            true
         }
         val photoFrame = FrameLayout(this)
         photoFrame.addView(image, FrameLayout.LayoutParams(-1, -1))
@@ -538,6 +591,7 @@ class MainActivity : ComponentActivity() {
             val params = photoFrame.layoutParams as LinearLayout.LayoutParams
             params.weight = if (photoOnlyState) 1f else 0.9f
             photoFrame.layoutParams = params
+            resetPhotoZoom()
             fullscreenButton.text = if (photoOnlyState) "⤡" else "⛶"
             setPhotoToolbarOverlay(photoOnlyState)
         }
@@ -583,6 +637,17 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (!isFinishing && image.parent != null) {
                     image.setImageBitmap(bitmap)
+                    if (bitmap != null) {
+                        image.post {
+                            val width = image.width.toFloat()
+                            val height = image.height.toFloat()
+                            if (width > 0f && height > 0f) {
+                                val fit = minOf(width / bitmap.width, height / bitmap.height)
+                                // 100% = één bronbitmap-pixel per schermpixel.
+                                maxZoomFactor = (1f / fit).coerceAtLeast(1f)
+                            }
+                        }
+                    }
                     image.contentDescription = if (bitmap == null) "Foto kon niet worden geladen" else name
                 }
             }
