@@ -1793,7 +1793,7 @@ class MainActivity : ComponentActivity() {
 
     // Hergebruik plaatsnamen bij foto's met dezelfde (afgeronde) GPS-locatie.
     // Beperk de cache tot de huidige analyse; geen wijziging aan fotobestanden.
-    private val analysisLocationCache = mutableMapOf<String, String>()
+    private val analysisLocationCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
         val coords = coordsOverride ?: gpsCoordinates(exif) ?: return "Onbekende locatie"
@@ -1930,39 +1930,49 @@ class MainActivity : ComponentActivity() {
 
     private fun plan(onProgress: (Int) -> Unit = {}): List<Plan> {
         val tree = sourceTree ?: return emptyList()
-        val plans = mutableListOf<Plan>()
         analysisLocationCache.clear()
         val uris = children(tree)
-
-        for ((index, uri) in uris.withIndex()) {
-            val exif = readExif(uri)
-            val name = displayName(uri)
-            val date = captureDate(exif) ?: alternateCaptureDate(uri)
-            val day = dateFolder(date) ?: "DATUM_ONBEKEND"
-            val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
-            val gpsText = if (coords == null) {
-                "GPS niet gevonden in EXIF"
-            } else {
-                "GPS ${"%.5f".format(Locale.US, coords[0])}, " +
-                    "${"%.5f".format(Locale.US, coords[1])}"
+        // Maximaal vier foto's tegelijk analyseren. De volgorde van het
+        // resultaat blijft identiek aan de oorspronkelijke bronmap.
+        val analysisPool = Executors.newFixedThreadPool(4)
+        return try {
+            val tasks = uris.map { uri ->
+                analysisPool.submit<Plan> {
+                val exif = readExif(uri)
+                val name = displayName(uri)
+                val date = captureDate(exif) ?: alternateCaptureDate(uri)
+                val day = dateFolder(date) ?: "DATUM_ONBEKEND"
+                val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
+                val gpsText = if (coords == null) {
+                    "GPS niet gevonden in EXIF"
+                } else {
+                    "GPS ${"%.5f".format(Locale.US, coords[0])}, " +
+                        "${"%.5f".format(Locale.US, coords[1])}"
+                }
+    
+                Plan(
+                    source = uri,
+                    name = name,
+                    dateFolder = day,
+                    locationFolder = locationFolder(exif, coords),
+                    renamedName = date?.let { renamedFileName(name, it) } ?: name,
+                    gpsText = gpsText,
+                    gpsDiagnostic = gpsDiagnostic(uri, exif, coords),
+                    coords = coords,
+                    issue = if (date == null) {
+                        "Geen bruikbare EXIF-opnamedatum"
+                    } else null
+                )
+                }
             }
-
-            plans += Plan(
-                source = uri,
-                name = name,
-                dateFolder = day,
-                locationFolder = locationFolder(exif, coords),
-                renamedName = date?.let { renamedFileName(name, it) } ?: name,
-                gpsText = gpsText,
-                gpsDiagnostic = gpsDiagnostic(uri, exif, coords),
-                coords = coords,
-                issue = if (date == null) {
-                    "Geen bruikbare EXIF-opnamedatum"
-                } else null
-            )
-            onProgress(if (uris.isEmpty()) 100 else ((index + 1) * 100 / uris.size))
+            tasks.mapIndexed { index, task ->
+                val result = task.get()
+                onProgress(if (tasks.isEmpty()) 100 else (index + 1) * 100 / tasks.size)
+                result
+            }
+        } finally {
+            analysisPool.shutdown()
         }
-        return plans
     }
 
     private fun setButtonProgress(button: Button, percent: Int, completed: Boolean = false) {
