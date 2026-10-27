@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
     // Tijdelijke albumindex en miniaturen blijven beschikbaar bij opnieuw openen.
     // Android mag de bitmapcache automatisch begrenzen op maximaal 32 MiB.
     private val albumCache = mutableMapOf<String, List<ExplorerEntry>>()
+    // Hergebruik de bestaande Gallery inclusief ImageViews en reeds getoonde miniaturen.
+    private val galleryViewCache = mutableMapOf<String, View>()
     private val thumbnailCache = object : LruCache<String, Bitmap>(32 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
     }
@@ -740,6 +742,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
+        val cacheKey = folderUri.toString()
+        val existingGallery = galleryViewCache[cacheKey]
+        if (existingGallery != null) {
+            // Na Terug hangt de Gallery nog aan de oude (niet zichtbare) pagina.
+            // Loskoppelen en dezelfde View direct opnieuw tonen voorkomt lege thumbnails.
+            (existingGallery.parent as? ViewGroup)?.removeView(existingGallery)
+            openFullScreen(folderName, existingGallery)
+            return
+        }
         val loading = TextView(this).apply { text = "Gallery laden…"; textSize = 16f; setPadding(24,24,24,24) }
         openFullScreen(folderName, loading)
         val cached = albumCache[folderUri.toString()]
@@ -747,7 +758,7 @@ class MainActivity : ComponentActivity() {
             // Het nieuwe Gallery-scherm moet eerst gekoppeld zijn voordat
             // de miniaturen worden geplaatst (ook bij een cache-hit).
             loading.post {
-                if (loading.parent != null) renderPhotoGrid(cached, loading)
+                if (loading.parent != null) renderPhotoGrid(cached, loading, cacheKey)
             }
             return
         }
@@ -768,7 +779,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
         if (loading.parent == null) return@runOnUiThread
         albumCache[folderUri.toString()] = photos.toList()
-        renderPhotoGrid(photos, loading)
+        renderPhotoGrid(photos, loading, cacheKey)
         }
         }
     }
@@ -859,7 +870,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
+    private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView, galleryCacheKey: String? = null) {
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
         val screenWidthDp = (screenWidthPx / density).toInt()
@@ -974,6 +985,7 @@ class MainActivity : ComponentActivity() {
         }
         val holder = loading.parent as? ViewGroup
         holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(galleryPage, index, ViewGroup.LayoutParams(-1,-1)) }
+        if (galleryCacheKey != null && galleryPage.parent != null) galleryViewCache[galleryCacheKey] = galleryPage
     }
 
     private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
