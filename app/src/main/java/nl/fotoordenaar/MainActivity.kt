@@ -460,21 +460,6 @@ class MainActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             root.addView(navigation)
         }
-        val filenameRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        filenameRow.addView(TextView(this).apply {
-            text = name
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 5, 8, 5)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(filenameRow)
-
         val tabs = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.rgb(235, 239, 243))
@@ -587,8 +572,6 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Beeldvullende foto aan of uit"
         }
         val iconSize = (46 * resources.displayMetrics.density).toInt()
-        filenameRow.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
-        filenameRow.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
             tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
@@ -624,6 +607,12 @@ class MainActivity : ComponentActivity() {
             applyPhotoMode()
         }
         openFullScreen(name, root, dark = true)
+        // Gebruik de bestaande bovenste balk: bestandsnaam staat daar al.
+        // Plaats beide knoppen rechts, zonder extra regel onder de foto.
+        val photoPage = screenStack.lastOrNull() as? LinearLayout
+        val photoToolbar = photoPage?.getChildAt(0) as? LinearLayout
+        photoToolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
+        photoToolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         applyPhotoMode()
         if (album != null) {
             photoWorker.execute {
