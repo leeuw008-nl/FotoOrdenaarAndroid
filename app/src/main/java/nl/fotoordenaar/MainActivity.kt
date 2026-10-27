@@ -1791,8 +1791,14 @@ class MainActivity : ComponentActivity() {
         return "${uriAccessDiagnostic(uri)}\n$result\n$xmpInfo"
     }
 
+    // Hergebruik plaatsnamen bij foto's met dezelfde (afgeronde) GPS-locatie.
+    // Beperk de cache tot de huidige analyse; geen wijziging aan fotobestanden.
+    private val analysisLocationCache = mutableMapOf<String, String>()
+
     private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
         val coords = coordsOverride ?: gpsCoordinates(exif) ?: return "Onbekende locatie"
+        val locationKey = "%.4f,%.4f".format(Locale.US, coords[0], coords[1])
+        analysisLocationCache[locationKey]?.let { return it }
 
         return try {
             val geocoder = Geocoder(this, Locale("nl", "NL"))
@@ -1836,7 +1842,7 @@ class MainActivity : ComponentActivity() {
                     ?: "Locatie onbekend"
             )
 
-            "${gemeente}_${plaats}_${locatie}"
+            "${gemeente}_${plaats}_${locatie}".also { analysisLocationCache[locationKey] = it }
         } catch (_: Exception) {
             gpsFolder(coords)
         }
@@ -1925,6 +1931,7 @@ class MainActivity : ComponentActivity() {
     private fun plan(onProgress: (Int) -> Unit = {}): List<Plan> {
         val tree = sourceTree ?: return emptyList()
         val plans = mutableListOf<Plan>()
+        analysisLocationCache.clear()
         val uris = children(tree)
 
         for ((index, uri) in uris.withIndex()) {
