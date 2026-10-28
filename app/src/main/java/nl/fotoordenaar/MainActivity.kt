@@ -168,19 +168,20 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 sourceTree = uri
-                contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
-                previewReady = false
-                previewPlans = null
-                previewButton.backgroundTintList = null
-                previewButton.text = "2. Voorbeeld bekijken"
-                moveButton.backgroundTintList = null
-                moveButton.text = "3. Foto's verplaatsen"
-                status.text = "Bronmap gekozen.\n\nKies eerst ‘Voorbeeld bekijken’."
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+                sourceButton.text = "Andere map kiezen"
+                explorerButton?.isEnabled = true
+                status.text = "Map geselecteerd. FotoVerkenner wordt geopend."
+                showExplorer(organizedOnly = false)
             }
         }
 
@@ -188,68 +189,39 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         sourceTree = savedInstanceState?.getString("sourceTree")?.let(Uri::parse)
         explorerOpen = savedInstanceState?.getBoolean("explorerOpen") ?: false
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(36, 36, 36, 24)
+            setPadding(28, 32, 28, 24)
         }
-
         root.addView(TextView(this).apply {
-            text = "FotoOrdenaar"
+            text = "FotoVerkenner VideoTest"
             textSize = 23f
         })
-
         status = TextView(this).apply {
-            textSize = 14f
-            text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
-            setPadding(0, 24, 0, 24)
-            // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
-            setTextIsSelectable(true)
+            textSize = 15f
+            text = "Kies een map om foto's en video's te bekijken en videometadata te testen."
+            setPadding(0, 20, 0, 20)
         }
-
-        val scroll = ScrollView(this).apply {
-            addView(status)
-        }
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-        )
-
+        root.addView(status)
         sourceButton = Button(this).apply {
-            text = "1. Bronmap kiezen"
+            text = if (sourceTree == null) "Map kiezen" else "Andere map kiezen"
             setOnClickListener { pickFolder.launch(null) }
         }
         root.addView(sourceButton)
-
-        previewButton = Button(this).apply {
-            text = "2. Voorbeeld bekijken"
-            setOnClickListener { previewFiles() }
-        }
-        root.addView(previewButton)
-
-        moveButton = Button(this).apply {
-            text = "3. Foto's verplaatsen"
-            setOnClickListener { confirmAndRun() }
-        }
-        root.addView(moveButton)
-
+        // Deze testapp is uitsluitend een verkenner: geen fotoanalyse of verplaatsknoppen.
+        previewButton = Button(this)
+        moveButton = Button(this)
         root.addView(Button(this).apply {
             text = "FotoVerkenner openen"
+            isEnabled = sourceTree != null
             setOnClickListener { showExplorer(organizedOnly = false) }
-        })
-
+        }.also { explorerButton = it })
         homeView = root
         setContentView(root)
-        sourceTree?.let {
-            sourceButton.backgroundTintList = ColorStateList.valueOf(Color.rgb(200, 230, 201))
-            status.text = "Eerder gekozen bronmap hersteld. Je kunt het resultaat opnieuw bekijken."
-        }
-        if (explorerOpen) {
-            root.post { showExplorer(organizedOnly = true) }
-        }
+        if (sourceTree != null && explorerOpen) root.post { showExplorer(organizedOnly = false) }
     }
+
+    private var explorerButton: Button? = null
 
     override fun onSaveInstanceState(outState: Bundle) {
         sourceTree?.let { outState.putString("sourceTree", it.toString()) }
@@ -1360,7 +1332,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("Foto-verkenner", root)
+        openFullScreen("FotoVerkenner VideoTest", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
