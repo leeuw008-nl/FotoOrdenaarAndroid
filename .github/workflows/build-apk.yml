@@ -8,6 +8,7 @@ name: Build FotoOrdenaar integratietest APK
       - main
       - foto-verkenner-standalone
       - test/fotoordenaar-met-verkenner
+      - test/fotoordenaar-video
 
 permissions:
   contents: write
@@ -49,10 +50,10 @@ jobs:
           retention-days: 14
 
       - name: Publiceer APK als GitHub Release
-        if: github.ref == 'refs/heads/foto-verkenner-standalone' || github.ref == 'refs/heads/test/fotoordenaar-met-verkenner'
+        if: github.ref == 'refs/heads/foto-verkenner-standalone' || github.ref == 'refs/heads/test/fotoordenaar-met-verkenner' || github.ref == 'refs/heads/test/fotoordenaar-video'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="foto-integratietest-${GITHUB_SHA:0:8}"
-          cp app/build/outputs/apk/debug/app-debug.apk FotoOrdenaar-integratietest.apk
-          gh release create "$TAG" FotoOrdenaar-integratietest.apk --title "FotoOrdenaar integratietest ${GITHUB_SHA:0:8}" --notes "APK voor Foto-verkenner, rechtstreeks te downloaden zonder Actions-artifact." --target "$GITHUB_SHA"
+          TAG="foto-video-test-${GITHUB_SHA:0:8}"
+          cp app/build/outputs/apk/debug/app-debug.apk FotoOrdenaar-video-test.apk
+          gh release create "$TAG" FotoOrdenaar-integratietest.apk --title "FotoOrdenaar video-test ${GITHUB_SHA:0:8}" --notes "APK voor Foto-verkenner, rechtstreeks te downloaden zonder Actions-artifact." --target "$GITHUB_SHA"
