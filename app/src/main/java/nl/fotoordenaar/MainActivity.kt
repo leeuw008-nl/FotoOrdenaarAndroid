@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.MediaStore
+import android.media.MediaMetadataRetriever
 import android.view.ViewGroup
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.ColorDrawable
@@ -1385,7 +1386,8 @@ class MainActivity : ComponentActivity() {
             while (c.moveToNext()) {
                 val name = c.getString(nameCol) ?: ""
                 val mime = c.getString(mimeCol) ?: ""
-                if (mime.startsWith("image/") ||
+                if (mime.startsWith("image/") || mime.startsWith("video/") ||
+                    name.matches(Regex("(?i).+\\.(mp4|mov|m4v|3gp|webm|mkv)$")) ||
                     name.matches(
                         Regex("(?i).+\\.(jpg|jpeg|heic|heif|png|webp|tif|tiff|dng)$")
                     )
@@ -1932,6 +1934,49 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
+    private fun isVideo(name: String): Boolean =
+        name.matches(Regex("(?i).+\\.(mp4|mov|m4v|3gp|webm|mkv)$"))
+
+    private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                retriever.setDataSource(descriptor.fileDescriptor)
+                val rawDate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                    ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                        ?.let { null }
+                val date = rawDate?.let { raw ->
+                    listOf("yyyyMMdd'T'HHmmss.SSS'Z'", "yyyyMMdd'T'HHmmss'Z'",
+                        "yyyyMMdd'T'HHmmss.SSSZ", "yyyyMMdd'T'HHmmssZ")
+                        .firstNotNullOfOrNull { pattern ->
+                            try {
+                                SimpleDateFormat(pattern, Locale.US).apply {
+                                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                    isLenient = false
+                                }.parse(raw)
+                            } catch (_: Exception) { null }
+                        }
+                }
+                val rawGps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
+                val gps = rawGps?.let { value ->
+                    val match = Regex("""^([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)/?$""").find(value)
+                    match?.let {
+                        val lat = it.groupValues[1].toDoubleOrNull()
+                        val lon = it.groupValues[2].toDoubleOrNull()
+                        if (lat != null && lon != null && lat in -90.0..90.0 &&
+                            lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
+                            doubleArrayOf(lat, lon) else null
+                    }
+                }
+                Pair(date, gps)
+            } ?: Pair(null, null)
+        } catch (_: Exception) {
+            Pair(null, null)
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
+
     private fun plan(onProgress: (Int) -> Unit = {}): List<Plan> {
         val tree = sourceTree ?: return emptyList()
         analysisLocationCache.clear()
@@ -1942,11 +1987,14 @@ class MainActivity : ComponentActivity() {
         return try {
             val tasks = uris.map { uri ->
                 analysisPool.submit<Plan> {
-                val exif = readExif(uri)
                 val name = displayName(uri)
-                val date = captureDate(exif) ?: alternateCaptureDate(uri)
+                val video = isVideo(name)
+                val exif = if (video) null else readExif(uri)
+                val videoInfo = if (video) videoMetadata(uri) else null
+                val date = if (video) videoInfo?.first else captureDate(exif) ?: alternateCaptureDate(uri)
                 val day = dateFolder(date) ?: "DATUM_ONBEKEND"
-                val coords = gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
+                val coords = if (video) videoInfo?.second else
+                    gpsCoordinates(exif) ?: alternateGpsCoordinates(uri) ?: xmpGpsCoordinates(uri)
                 val gpsText = if (coords == null) {
                     "GPS niet gevonden in EXIF"
                 } else {
@@ -1961,10 +2009,10 @@ class MainActivity : ComponentActivity() {
                     locationFolder = locationFolder(exif, coords),
                     renamedName = date?.let { renamedFileName(name, it) } ?: name,
                     gpsText = gpsText,
-                    gpsDiagnostic = gpsDiagnostic(uri, exif, coords),
+                    gpsDiagnostic = if (video) "Video-metadata" else gpsDiagnostic(uri, exif, coords),
                     coords = coords,
                     issue = if (date == null) {
-                        "Geen bruikbare EXIF-opnamedatum"
+                        if (video) "Geen bruikbare video-opnamedatum" else "Geen bruikbare EXIF-opnamedatum"
                     } else null
                 )
                 }
@@ -2145,8 +2193,8 @@ class MainActivity : ComponentActivity() {
 
                     // Verwijder het origineel pas als GPS ook in het doelbestand leesbaar is.
                     if (p.coords != null) {
-                        val copiedGps = gpsCoordinates(readExif(target))
-                            ?: alternateGpsCoordinates(target)
+                        val copiedGps = if (isVideo(targetName)) videoMetadata(target).second else
+                            gpsCoordinates(readExif(target)) ?: alternateGpsCoordinates(target)
                         if (copiedGps == null ||
                             kotlin.math.abs(copiedGps[0] - p.coords[0]) > 0.0001 ||
                             kotlin.math.abs(copiedGps[1] - p.coords[1]) > 0.0001) {
