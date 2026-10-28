@@ -1943,8 +1943,6 @@ class MainActivity : ComponentActivity() {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                 retriever.setDataSource(descriptor.fileDescriptor)
                 val rawDate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
-                    ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
-                        ?.let { null }
                 val date = rawDate?.let { raw ->
                     listOf("yyyyMMdd'T'HHmmss.SSS'Z'", "yyyyMMdd'T'HHmmss'Z'",
                         "yyyyMMdd'T'HHmmss.SSSZ", "yyyyMMdd'T'HHmmssZ")
