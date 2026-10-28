@@ -9,7 +9,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "nl.fotoordenaar.videotest"
+        applicationId = "nl.fotoverkenner.videotest"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
