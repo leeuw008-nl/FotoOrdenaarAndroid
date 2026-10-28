@@ -283,40 +283,139 @@ class MainActivity : ComponentActivity() {
     private fun isVideoEntry(entry: ExplorerEntry): Boolean =
         !entry.isDirectory && isVideo(entry.name)
 
-    private fun openVideo(entry: ExplorerEntry) {
+    private fun videoFrame(uri: Uri): Bitmap? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                retriever.setDataSource(fd.fileDescriptor)
+                val frame = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: retriever.getFrameAtTime()
+                frame?.let {
+                    val scale = minOf(1f, 350f / maxOf(it.width, it.height).coerceAtLeast(1))
+                    if (scale < 1f) Bitmap.createScaledBitmap(it,
+                        (it.width * scale).toInt().coerceAtLeast(1),
+                        (it.height * scale).toInt().coerceAtLeast(1), true) else it
+                }
+            }
+        } catch (_: Exception) { null }
+        finally { try { retriever.release() } catch (_: Exception) {} }
+    }
+
+    private fun openVideo(entry: ExplorerEntry, fromGallery: Boolean = false) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
         }
         val player = VideoView(this)
-        root.addView(player, LinearLayout.LayoutParams(-1, 0, 1f))
-        val details = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            setPadding(16, 12, 16, 12)
-            text = "Video: ${entry.name}\\nMetadata laden…"
+        val videoFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1))
+        root.addView(videoFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val metadataButton = Button(this).apply { text = "● Metadata" }
+        val mapButton = Button(this).apply { text = "Kaart" }
+        tabs.addView(metadataButton, LinearLayout.LayoutParams(0, -2, 1f))
+        tabs.addView(mapButton, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(tabs)
+        val tabBody = FrameLayout(this)
+        root.addView(tabBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        val metadata = TextView(this).apply {
+            text = "Videometadata laden…"
+            textSize = 15f
+            setPadding(18, 18, 18, 18)
+            setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
         }
-        root.addView(details)
+        var coords: DoubleArray? = null
+        var metadataLoaded = false
+        var showingMap = false
+        fun selectTab(map: Boolean) {
+            showingMap = map
+            metadataButton.text = if (map) "Metadata" else "● Metadata"
+            mapButton.text = if (map) "● Kaart" else "Kaart"
+            tabBody.removeAllViews()
+            if (!map) {
+                (metadata.parent as? ViewGroup)?.removeView(metadata)
+                tabBody.addView(metadata, FrameLayout.LayoutParams(-1, -1))
+            } else {
+                val position = coords
+                val view: View = if (!metadataLoaded) TextView(this).apply {
+                    text = "GPS-locatie lezen…"
+                    setPadding(18, 18, 18, 18)
+                } else if (position == null) TextView(this).apply {
+                    text = "Geen GPS-coördinaten in deze video gevonden."
+                    setPadding(18, 18, 18, 18)
+                } else WebView(this).apply {
+                    settings.javaScriptEnabled = true
+                    webViewClient = WebViewClient()
+                    val lat = position[0]
+                    val lon = position[1]
+                    val delta = 0.008
+                    loadUrl("https://www.openstreetmap.org/export/embed.html?bbox=" +
+                        "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
+                        "&layer=mapnik&marker=${lat}%2C${lon}")
+                }
+                tabBody.addView(view, FrameLayout.LayoutParams(-1, -1))
+            }
+        }
+        metadataButton.setOnClickListener { selectTab(false) }
+        mapButton.setOnClickListener { selectTab(true) }
+        selectTab(false)
+        val galleryButton = TextView(this).apply {
+            text = "▦"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Terug naar Gallery"
+            setOnClickListener { closeFullScreen() }
+        }
+        var fullscreen = false
+        val fullscreenButton = TextView(this).apply {
+            text = "⛶"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Video beeldvullend weergeven"
+            setOnClickListener {
+                fullscreen = !fullscreen
+                tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
+                tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
+                text = if (fullscreen) "⤡" else "⛶"
+                videoFrame.layoutParams = LinearLayout.LayoutParams(-1, 0,
+                    if (fullscreen) 1f else 1f)
+            }
+        }
         openFullScreen(entry.name, root, dark = true)
+        val page = screenStack.lastOrNull() as? LinearLayout
+        val toolbar = page?.getChildAt(0) as? LinearLayout
+        val iconSize = (46 * resources.displayMetrics.density).toInt()
+        toolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
+        toolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         val controller = MediaController(this)
         controller.setAnchorView(player)
         player.setMediaController(controller)
         player.setOnPreparedListener { player.start() }
         player.setOnErrorListener { _, _, _ ->
-            details.text = "Video kan niet worden afgespeeld: ${entry.name}"
+            metadata.text = "Video kan niet worden afgespeeld: ${entry.name}"
             true
         }
         player.setVideoURI(entry.uri)
         photoWorker.execute {
-            val (date, coords) = videoMetadata(entry.uri)
+            val (date, gps) = videoMetadata(entry.uri)
             val dateText = date?.let {
                 SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
             } ?: "niet gevonden"
-            val gpsText = coords?.let {
+            val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
             runOnUiThread {
-                if (details.parent != null) details.text =
-                    "Video: ${entry.name}\\nOpnamedatum: $dateText\\nGPS: $gpsText"
+                if (root.parent != null) {
+                    coords = gps
+                    metadataLoaded = true
+                    metadata.text = "Video: ${entry.name}\\nOpnamedatum: $dateText\\nGPS: $gpsText"
+                    if (showingMap) selectTab(true)
+                }
             }
         }
     }
@@ -991,15 +1090,13 @@ class MainActivity : ComponentActivity() {
                 // mogen de nieuwe thumbnails niet blokkeren.
                 val thumbKey = photo.uri.toString()
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
-                if (isVideoEntry(photo)) {
-                    thumb.setImageResource(android.R.drawable.ic_media_play)
-                } else if (cachedThumb != null && !cachedThumb.isRecycled) {
+                if (cachedThumb != null && !cachedThumb.isRecycled) {
                     // Direct instellen: ImageView bewaart de drawable ook voordat
                     // het nieuwe Gallery-scherm aan het venster hangt.
                     thumb.setImageBitmap(cachedThumb)
                 } else {
                     galleryThumbWorker.execute {
-                        val bitmap = try { galleryThumbnail(photo.uri) } catch (_: Exception) { null }
+                        val bitmap = try { if (isVideoEntry(photo)) videoFrame(photo.uri) else galleryThumbnail(photo.uri) } catch (_: Exception) { null }
                         if (bitmap != null) synchronized(thumbnailCache) {
                             thumbnailCache.put(thumbKey, bitmap)
                         }
