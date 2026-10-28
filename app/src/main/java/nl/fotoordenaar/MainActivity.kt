@@ -100,7 +100,18 @@ class MainActivity : ComponentActivity() {
             if (cached != null) return cached
             file.delete()
         }
-        val source = loadSampledBitmap(uri, 350) ?: return null
+        val source = if (isVideo(uri.lastPathSegment ?: "") || contentResolver.getType(uri)?.startsWith("video/") == true) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                    retriever.setDataSource(fd.fileDescriptor)
+                    retriever.getFrameAtTime(1000000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.getFrameAtTime()
+                }
+            } catch (_: Exception) { null }
+            finally { try { retriever.release() } catch (_: Exception) {} }
+        } else loadSampledBitmap(uri, 350)
+        if (source == null) return null
         // Bewaar een kleine thumbnail, niet de mogelijk veel grotere decode-bitmap.
         val ratio = minOf(1f, 350f / maxOf(source.width, source.height).coerceAtLeast(1))
         val thumb = if (ratio < 1f) Bitmap.createScaledBitmap(source,
@@ -830,7 +841,7 @@ class MainActivity : ComponentActivity() {
             if (!visited.add(parent.toString())) continue
             val entries = try { explorerEntries(parent) } catch (_: Exception) { emptyList() }
             for (entry in entries) {
-                if (isImageEntry(entry)) photos.add(entry)
+                if (isImageEntry(entry) || isVideoEntry(entry)) photos.add(entry)
                 else if (entry.isDirectory) pending.add(entry.uri)
             }
         }
@@ -981,9 +992,27 @@ class MainActivity : ComponentActivity() {
                         cellWidthPx - (8 * density).toInt()
                     )
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo), fromGallery = true) }
+                    setOnClickListener {
+                        if (isVideoEntry(photo)) openVideo(photo.uri, photo.name)
+                        else {
+                            val images = photos.filter { isImageEntry(it) }
+                            showFullscreenPhoto(photo.uri, photo.name, images, images.indexOf(photo).coerceAtLeast(0), fromGallery = true)
+                        }
+                    }
                 }
-                tile.addView(thumb)
+                if (isVideoEntry(photo)) {
+                    val frame = FrameLayout(this)
+                    frame.addView(thumb)
+                    frame.addView(TextView(this).apply {
+                        text = "▶"
+                        textSize = 21f
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.argb(130, 0, 0, 0))
+                        gravity = Gravity.CENTER
+                        setOnClickListener { openVideo(photo.uri, photo.name) }
+                    }, FrameLayout.LayoutParams((38 * density).toInt(), (38 * density).toInt(), Gravity.CENTER))
+                    tile.addView(frame)
+                } else tile.addView(thumb)
                 tile.addView(TextView(this).apply {
                     text = photo.name
                     textSize = 10f
@@ -993,7 +1022,7 @@ class MainActivity : ComponentActivity() {
                 grid.addView(tile)
                 // Nieuwe Gallery krijgt een eigen thumbnail-wachtrij. Eerdere albums
                 // mogen de nieuwe thumbnails niet blokkeren.
-                val thumbKey = photo.uri.toString()
+                val thumbKey = photo.uri.toString() + if (isVideoEntry(photo)) "#video" else "#image"
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
                 if (cachedThumb != null && !cachedThumb.isRecycled) {
                     // Direct instellen: ImageView bewaart de drawable ook voordat
