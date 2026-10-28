@@ -34,6 +34,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.ImageView
+import android.widget.VideoView
+import android.widget.MediaController
 import android.widget.GridLayout
 import android.widget.FrameLayout
 import android.widget.EditText
@@ -304,6 +306,47 @@ class MainActivity : ComponentActivity() {
         return !entry.isDirectory && (n.endsWith(".jpg") || n.endsWith(".jpeg") ||
             n.endsWith(".png") || n.endsWith(".webp") || n.endsWith(".heic") ||
             n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp"))
+    }
+
+    private fun isVideoEntry(entry: ExplorerEntry): Boolean =
+        !entry.isDirectory && isVideo(entry.name)
+
+    private fun openVideo(entry: ExplorerEntry) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
+        val player = VideoView(this)
+        root.addView(player, LinearLayout.LayoutParams(-1, 0, 1f))
+        val details = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setPadding(16, 12, 16, 12)
+            text = "Video: ${entry.name}\\nMetadata laden…"
+        }
+        root.addView(details)
+        openFullScreen(entry.name, root, dark = true)
+        val controller = MediaController(this)
+        controller.setAnchorView(player)
+        player.setMediaController(controller)
+        player.setOnPreparedListener { player.start() }
+        player.setOnErrorListener { _, _, _ ->
+            details.text = "Video kan niet worden afgespeeld: ${entry.name}"
+            true
+        }
+        player.setVideoURI(entry.uri)
+        photoWorker.execute {
+            val (date, coords) = videoMetadata(entry.uri)
+            val dateText = date?.let {
+                SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
+            } ?: "niet gevonden"
+            val gpsText = coords?.let {
+                "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
+            } ?: "niet gevonden"
+            runOnUiThread {
+                if (details.parent != null) details.text =
+                    "Video: ${entry.name}\\nOpnamedatum: $dateText\\nGPS: $gpsText"
+            }
+        }
     }
 
     private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
@@ -808,7 +851,7 @@ class MainActivity : ComponentActivity() {
             if (!visited.add(parent.toString())) continue
             val entries = try { explorerEntries(parent) } catch (_: Exception) { emptyList() }
             for (entry in entries) {
-                if (isImageEntry(entry)) photos.add(entry)
+                if (isImageEntry(entry) || isVideoEntry(entry)) photos.add(entry)
                 else if (entry.isDirectory) pending.add(entry.uri)
             }
         }
@@ -832,7 +875,7 @@ class MainActivity : ComponentActivity() {
             val pins = mutableListOf<Triple<Int, Double, Double>>()
             photos.forEachIndexed { index, photo ->
                 val coords = try {
-                    cachedGpsCoordinates(photo.name)
+                    if (isVideoEntry(photo)) videoMetadata(photo.uri).second else cachedGpsCoordinates(photo.name)
                         ?: gpsCoordinates(readExif(photo.uri))
                         ?: alternateGpsCoordinates(photo.uri)
                         ?: xmpGpsCoordinates(photo.uri)
@@ -959,7 +1002,10 @@ class MainActivity : ComponentActivity() {
                         cellWidthPx - (8 * density).toInt()
                     )
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo), fromGallery = true) }
+                    setOnClickListener {
+                        if (isVideoEntry(photo)) openVideo(photo)
+                        else showFullscreenPhoto(photo.uri, photo.name, photos.filter { isImageEntry(it) }, photos.filter { isImageEntry(it) }.indexOf(photo).coerceAtLeast(0), fromGallery = true)
+                    }
                 }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
@@ -973,7 +1019,9 @@ class MainActivity : ComponentActivity() {
                 // mogen de nieuwe thumbnails niet blokkeren.
                 val thumbKey = photo.uri.toString()
                 val cachedThumb = synchronized(thumbnailCache) { thumbnailCache.get(thumbKey) }
-                if (cachedThumb != null && !cachedThumb.isRecycled) {
+                if (isVideoEntry(photo)) {
+                    thumb.setImageResource(android.R.drawable.ic_media_play)
+                } else if (cachedThumb != null && !cachedThumb.isRecycled) {
                     // Direct instellen: ImageView bewaart de drawable ook voordat
                     // het nieuwe Gallery-scherm aan het venster hangt.
                     thumb.setImageBitmap(cachedThumb)
@@ -1058,7 +1106,7 @@ class MainActivity : ComponentActivity() {
                 val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
                 for (entry in entries) {
                     if (entry.isDirectory) pending.add(entry.uri)
-                    else if (isImageEntry(entry) && entry.name.contains(term, ignoreCase = true)) matches.add(entry)
+                    else if ((isImageEntry(entry) || isVideoEntry(entry)) && entry.name.contains(term, ignoreCase = true)) matches.add(entry)
                 }
             }
             matches.sortBy { it.name.lowercase(Locale.ROOT) }
@@ -1133,7 +1181,7 @@ class MainActivity : ComponentActivity() {
                                 dirs += it.first
                                 photos += it.second
                             }
-                        } else if (isImageEntry(entry)) photos++
+                        } else if (isImageEntry(entry) || isVideoEntry(entry)) photos++
                     }
                     counts[key] = dirs to photos
                 } else if (visited.add(key)) {
@@ -1273,10 +1321,14 @@ class MainActivity : ComponentActivity() {
                     if (all) addLevel(entry.uri, children, depth + 1, true)
                 } else {
                     val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
-                    label.text = if (isImageEntry(entry))
+                    label.text = if (isVideoEntry(entry))
+                        "🎬  ${entry.name}  —  $sizeText  ›"
+                    else if (isImageEntry(entry))
                         "🖼  ${entry.name}  —  $sizeText  —  afmetingen laden…  ›"
                     else "📄  ${entry.name}  —  $sizeText"
-                    if (isImageEntry(entry)) {
+                    if (isVideoEntry(entry)) {
+                        label.setOnClickListener { openVideo(entry) }
+                    } else if (isImageEntry(entry)) {
                         dimensionWorker.execute {
                             val dimensions = imageDimensions(entry.uri) ?: "afmetingen onbekend"
                             runOnUiThread {
