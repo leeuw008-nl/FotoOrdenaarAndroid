@@ -306,6 +306,28 @@ class MainActivity : ComponentActivity() {
             n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp"))
     }
 
+    private fun isVideoEntry(entry: ExplorerEntry): Boolean =
+        !entry.isDirectory && entry.name.matches(
+            Regex("(?i).+\\.(mp4|mov|m4v|3gp|webm|mkv)$")
+        )
+
+    private fun openVideo(uri: Uri, name: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, contentResolver.getType(uri) ?: "video/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = android.content.ClipData.newUri(contentResolver, name, uri)
+            }
+            startActivity(Intent.createChooser(intent, "Video afspelen"))
+        } catch (e: Exception) {
+            AlertDialog.Builder(this)
+                .setTitle("Video niet geopend")
+                .setMessage("Geen geschikte videospeler gevonden of toegang geweigerd: ${e.message}")
+                .setPositiveButton("OK", null)
+                .show()
+        }
+    }
+
     private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1275,6 +1297,7 @@ class MainActivity : ComponentActivity() {
                     val sizeText = entry.sizeBytes?.let { formatFileSize(it) } ?: "grootte onbekend"
                     label.text = if (isImageEntry(entry))
                         "🖼  ${entry.name}  —  $sizeText  —  afmetingen laden…  ›"
+                    else if (isVideoEntry(entry)) "🎬  ${entry.name}  —  $sizeText  ▶"
                     else "📄  ${entry.name}  —  $sizeText"
                     if (isImageEntry(entry)) {
                         dimensionWorker.execute {
@@ -1288,6 +1311,8 @@ class MainActivity : ComponentActivity() {
                             currentFolder.text = "Huidige map: ${entry.name}"
                             showPhotoFromFolder(entry.uri, entry.name, parent)
                         }
+                    } else if (isVideoEntry(entry)) {
+                        label.setOnClickListener { openVideo(entry.uri, entry.name) }
                     }
                 }
             }
@@ -1308,7 +1333,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("Foto-verkenner", root)
+        openFullScreen("FotoVerkenner VideoTest", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
