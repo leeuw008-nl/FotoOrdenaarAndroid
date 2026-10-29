@@ -195,7 +195,7 @@ class MainActivity : ComponentActivity() {
             setPadding(20, 24, 20, 20)
         }
         root.addView(TextView(this).apply {
-            text = "MediaVerkenner"
+            text = "MediaOrdenaar"
             textSize = 24f
         })
         status = TextView(this).apply {
@@ -1965,7 +1965,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("MediaVerkenner", root)
+        openFullScreen("MediaOrdenaar", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
