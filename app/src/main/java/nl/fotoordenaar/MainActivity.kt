@@ -1207,9 +1207,13 @@ class MainActivity : ComponentActivity() {
                         openMedia(photo, photos, photos.indexOf(photo), fromGallery = true)
                     }
                 }
+                if (isVideoEntry(photo)) {
+                    thumb.setBackgroundColor(Color.rgb(35, 35, 35))
+                    thumb.setImageResource(android.R.drawable.ic_media_play)
+                }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
-                    text = photo.name
+                    text = if (isVideoEntry(photo)) "▶ ${photo.name}" else photo.name
                     textSize = 10f
                     maxLines = 2
                     setPadding(2, 2, 2, 4)
