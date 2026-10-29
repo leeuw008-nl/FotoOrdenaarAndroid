@@ -218,6 +218,12 @@ class MainActivity : ComponentActivity() {
         }.also { explorerButton = it })
         homeView = root
         setContentView(root)
+        // Deze zelfstandige app heeft een eigen Android-toestemming voor GPS in media.
+        // De toestemming van FotoVerkenner/FotoOrdenaar wordt niet overgenomen.
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        }
         if (sourceTree != null && explorerOpen) root.post { showExplorer(organizedOnly = false) }
     }
 
@@ -1747,13 +1753,6 @@ class MainActivity : ComponentActivity() {
         val candidates = listOf(original, uri).distinct()
         var fallback: ExifInterface? = null
         for (candidate in candidates) {
-            try {
-                contentResolver.openInputStream(candidate)?.use { input ->
-                    val exif = ExifInterface(input)
-                    if (gpsCoordinates(exif) != null) return exif
-                    if (fallback == null) fallback = exif
-                }
-            } catch (_: Exception) {}
             try {
                 contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
                     val exif = ExifInterface(pfd.fileDescriptor)
