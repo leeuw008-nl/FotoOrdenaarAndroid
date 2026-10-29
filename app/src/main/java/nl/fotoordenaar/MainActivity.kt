@@ -655,7 +655,13 @@ class MainActivity : ComponentActivity() {
             val containerTags = videoContainerTags(entry.uri)
             val extraDetails = containerTags.joinToString("\n") { (name, value) -> "$name: $value" }
             val mediaInfoReport = nativeMediaInfo(entry.uri)
-            val details = videoTechnicalInfo(entry.uri) + "\n\nMediaInfoLib:\n" + mediaInfoReport + if (extraDetails.isNotEmpty()) "\n\nMP4 / QuickTime metadata:\n$extraDetails" else ""
+            val details = "=== 1. MediaInfoLib (ruwe uitvoer) ===\\n" + mediaInfoReport +
+                "\\n\\n=== 2. MP4-containergegevens ===\\n" +
+                (if (extraDetails.isNotEmpty()) extraDetails else "[Geen tags gevonden]") +
+                "\\n\\n=== 3. Android-metadata en diagnose ===\\n" +
+                videoTechnicalInfo(entry.uri) +
+                "\\nMP4-tag-aantal: ${containerTags.size}\\nGPS uit uitleesmethoden: " +
+                (if (gps != null) "gevonden" else "niet gevonden")
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
@@ -738,13 +744,16 @@ class MainActivity : ComponentActivity() {
     private fun nativeMediaInfo(uri: Uri): String {
         return try {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-                // De native MediaInfo-reader kan de descriptor zelf sluiten.
-                // Sluit dezelfde fd daarom niet nogmaals via adoptFd().
-                val fd = android.os.ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd()
-                net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
-                    fd, displayName(uri), "Text") ?: ""
-            } ?: ""
-        } catch (e: Exception) { "MediaInfo-fout: ${e.message}" }
+                val length = descriptor.statSize
+                val report = net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
+                    descriptor.fd, displayName(uri), "Text")
+                "MediaInfo bron: bestandsdescriptor; grootte: $length bytes\n" +
+                    "Rapportlengte: ${report?.length ?: 0} tekens\n" +
+                    (report?.takeIf { it.isNotBlank() } ?: "[MediaInfoLib gaf geen tekst terug]")
+            } ?: "MediaInfo: bestandsdescriptor kon niet worden geopend."
+        } catch (e: Throwable) {
+            "MediaInfo-fout: ${e.javaClass.simpleName}: ${e.message}"
+        }
     }
 
     private fun nativeMediaInfoGps(uri: Uri): DoubleArray? {
