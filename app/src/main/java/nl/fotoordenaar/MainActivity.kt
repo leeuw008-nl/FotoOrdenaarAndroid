@@ -170,11 +170,12 @@ class MainActivity : ComponentActivity() {
                     .edit().putString("selected_tree", uri.toString()).apply()
                 try {
                     contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                     )
                 } catch (_: SecurityException) {}
-                status.text = "Mediamap geselecteerd. Tik op Verkenner openen."
-                showExplorer(organizedOnly = false)
+                status.text = "Bronmap geselecteerd. Tik op Media analyseren om eerst een voorbeeld te bekijken."
+                previewReady = false
+                previewPlans = null
             }
         }
 
@@ -199,22 +200,30 @@ class MainActivity : ComponentActivity() {
             textSize = 24f
         })
         status = TextView(this).apply {
-            text = "Kies een mediamap om albums, galerij, metadata en kaart te bekijken."
+            text = "Kies een bronmap. Analyseer eerst de media en controleer het voorstel voordat je bestanden verplaatst."
             textSize = 15f
             setPadding(4, 20, 4, 20)
         }
         root.addView(status)
         sourceButton = Button(this).apply {
-            text = "Mediamap kiezen"
+            text = "1. Bronmap kiezen"
             setOnClickListener {
                 pickFolder.launch(null)
             }
         }
         root.addView(sourceButton)
-        previewButton = Button(this)
-        moveButton = Button(this)
+        previewButton = Button(this).apply {
+            text = "2. Media analyseren (voorbeeld)"
+            setOnClickListener { previewFiles() }
+        }
+        root.addView(previewButton)
+        moveButton = Button(this).apply {
+            text = "3. Media verplaatsen"
+            setOnClickListener { confirmAndRun() }
+        }
+        root.addView(moveButton)
         root.addView(Button(this).apply {
-            text = "Verkenner openen"
+            text = "Media bekijken (Verkenner)"
             setOnClickListener { showExplorer(organizedOnly = false) }
         })
         homeView = root
