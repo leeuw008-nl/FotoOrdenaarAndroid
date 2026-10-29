@@ -387,6 +387,9 @@ class MainActivity : ComponentActivity() {
         if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
     }
 
+    private fun isVideo(name: String): Boolean =
+        name.matches(Regex("(?i).+\\.(mp4|mov|m4v|3gp|webm|mkv)$"))
+
     private fun isVideoEntry(entry: ExplorerEntry): Boolean =
         !entry.isDirectory && isVideo(entry.name)
 
@@ -663,9 +666,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun isVideoEntry(entry: ExplorerEntry): Boolean =
-        !entry.isDirectory && isVideo(entry.name)
 
     private fun videoTechnicalInfo(uri: Uri): String {
         val r = MediaMetadataRetriever()
