@@ -663,7 +663,9 @@ class MainActivity : ComponentActivity() {
                 "\n\n=== 2. MP4-containergegevens ===\n" +
                 (if (extraDetails.isNotEmpty()) extraDetails else "[Geen tags gevonden]") +
                 "\n\n=== 3. Android-metadata en diagnose ===\n" +
-                videoTechnicalInfo(entry.uri) +\n                "\\n\\n=== 4. Audio ===\\n" + videoAudioTracks(entry.uri) +\n                "\\n\\n=== 5. GPS / ruwe MP4-controle ===\\n" + videoRawLocationDiagnostics(entry.uri) +
+                videoTechnicalInfo(entry.uri) +
+                "\n\n=== 4. Audio ===\n" + videoAudioTracks(entry.uri) +
+                "\n\n=== 5. GPS / ruwe MP4-controle ===\n" + videoRawLocationDiagnostics(entry.uri) +
                 "\nMP4-tag-aantal: ${containerTags.size}\nGPS uit uitleesmethoden: " +
                 (if (gps != null) "gevonden" else "niet gevonden")
             val gpsText = gps?.let {
