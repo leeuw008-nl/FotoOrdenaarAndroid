@@ -312,6 +312,8 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.BLACK)
         }
         val player = VideoView(this)
+        var videoPixelWidth = 0
+        var videoPixelHeight = 0
         val videoFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         // Centreer staande video's en behoud de oorspronkelijke beeldverhouding.
@@ -427,8 +429,6 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Terug naar Gallery"
             setOnClickListener { closeFullScreen() }
         }
-        var videoPixelWidth = 0
-        var videoPixelHeight = 0
         var fullscreen = false
         var videoToolbar: LinearLayout? = null
         fun updateVideoLayout() {
