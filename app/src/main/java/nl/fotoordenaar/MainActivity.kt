@@ -652,7 +652,9 @@ class MainActivity : ComponentActivity() {
             val dateText = date?.let {
                 SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
             } ?: "niet gevonden"
-            val details = videoTechnicalInfo(entry.uri)
+            val containerTags = videoContainerTags(entry.uri)
+            val extraDetails = containerTags.joinToString("\\n") { (name, value) -> "$name: $value" }
+            val details = videoTechnicalInfo(entry.uri) + if (extraDetails.isNotEmpty()) "\\n\\nMP4 / QuickTime metadata:\\n$extraDetails" else ""
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
@@ -715,6 +717,34 @@ class MainActivity : ComponentActivity() {
             (lat != 0.0 || lon != 0.0)) doubleArrayOf(lat, lon) else null
     }
 
+    private fun videoContainerTags(uri: Uri): List<Pair<String, String>> {
+        // Metadata-extractor ondersteunt QuickTime- en MP4-atomen, waaronder
+        // locatievelden die Android MediaMetadataRetriever vaak niet teruggeeft.
+        return try {
+            contentResolver.openInputStream(uri)?.buffered()?.use { stream ->
+                val metadata = com.drew.imaging.ImageMetadataReader.readMetadata(stream)
+                metadata.directories.flatMap { directory ->
+                    directory.tags.mapNotNull { tag ->
+                        val value = tag.description?.trim()
+                        if (value.isNullOrBlank()) null
+                        else Pair("${directory.name} / ${tag.tagName}", value)
+                    }
+                }.take(180)
+            } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun videoContainerGps(uri: Uri): DoubleArray? {
+        val tags = videoContainerTags(uri)
+        for ((name, value) in tags) {
+            if (name.contains("location", true) || name.contains("gps", true) ||
+                name.contains("coordinates", true) || name.contains("ISO6709", true)) {
+                parseVideoGps(value)?.let { return it }
+            }
+        }
+        return null
+    }
+
     private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
         // De originele MediaStore-URI kan locatiegegevens bevatten die in een
         // gewone content-URI door Android worden afgeschermd.
@@ -754,7 +784,7 @@ class MainActivity : ComponentActivity() {
             }
             if (foundDate != null && foundGps != null) break
         }
-        return Pair(foundDate, foundGps)
+        return Pair(foundDate, foundGps ?: videoContainerGps(uri))
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
