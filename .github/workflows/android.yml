@@ -7,6 +7,7 @@ on:
       - fix/gps-xmp-diagnostics
       - restore/fotoverkenner-backup-test-2026-10-29
       - test/fotoverkenner-video-vanaf-werkende-gps-2026-10-29
+      - test/mediaverkenner-video-gps-metadata-2026-10-29
 
 permissions:
   contents: read
