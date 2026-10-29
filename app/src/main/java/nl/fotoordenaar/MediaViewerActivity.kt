@@ -1748,6 +1748,10 @@ class MediaViewerActivity : ComponentActivity() {
         val scroll = ScrollView(this).apply { addView(content) }
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(Button(this).apply {
+            text = "⌂ Home MediaOrdenaar"
+            setOnClickListener { finish() }
+        })
         root.addView(currentFolder)
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
