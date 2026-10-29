@@ -324,6 +324,46 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) { fallback }
     }
 
+    private fun configureOsmMap(webView: WebView) {
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                webView.evaluateJavascript("""
+                    (function() {
+                      if (document.getElementById('mv-zoom-level')) return;
+                      var style = document.createElement('style');
+                      style.textContent =
+                        '.leaflet-control-attribution { white-space:nowrap !important; ' +
+                        'max-width:calc(100vw - 10px) !important; overflow-x:auto !important; ' +
+                        'font-size:10px !important; }' +
+                        '#mv-zoom-level { position:fixed;top:9px;right:9px;z-index:9999;' +
+                        'background:white;color:#222;border:1px solid #aaa;border-radius:4px;' +
+                        'padding:5px 7px;font:13px sans-serif;pointer-events:none; }';
+                      document.head.appendChild(style);
+                      var badge = document.createElement('div');
+                      badge.id = 'mv-zoom-level';
+                      badge.textContent = 'Zoom: —';
+                      document.body.appendChild(badge);
+                      function refresh() {
+                        try {
+                          if (typeof map !== 'undefined' && map.getZoom) {
+                            badge.textContent = 'Zoom: ' + map.getZoom();
+                            if (!badge.dataset.bound) {
+                              map.on('zoomend', refresh);
+                              badge.dataset.bound = '1';
+                            }
+                          }
+                        } catch(e) {}
+                      }
+                      refresh();
+                      document.addEventListener('click', refresh);
+                      document.addEventListener('touchend', refresh);
+                    })();
+                """.trimIndent(), null)
+            }
+        }
+    }
+
     private fun openFullScreen(title: String, body: View, dark: Boolean = false) {
         val current = if (screenStack.isEmpty()) homeView else screenStack.lastOrNull()
         if (current != null && (screenStack.isEmpty() || current !== body)) {
@@ -548,7 +588,7 @@ class MainActivity : ComponentActivity() {
                 } else WebView(this).apply {
                     setBackgroundColor(Color.WHITE)
                     settings.javaScriptEnabled = true
-                    webViewClient = WebViewClient()
+                    configureOsmMap(this)
                     val lat = position[0]
                     val lon = position[1]
                     val delta = 0.008
@@ -600,7 +640,7 @@ class MainActivity : ComponentActivity() {
         val page = screenStack.lastOrNull() as? LinearLayout
         val toolbar = page?.getChildAt(0) as? LinearLayout
         videoToolbar = toolbar
-        val iconSize = (46 * resources.displayMetrics.density).toInt()
+        val iconSize = (40 * resources.displayMetrics.density).toInt()
         val floatingExit = TextView(this).apply {
             text = "⤡"
             textSize = 26f
@@ -1135,7 +1175,7 @@ class MainActivity : ComponentActivity() {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.loadsImagesAutomatically = true
-                webViewClient = WebViewClient()
+                configureOsmMap(this)
                 val lat = coords[0]
                 val lon = coords[1]
                 val delta = 0.008
@@ -1208,7 +1248,7 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Beeldvullende media aan of uit"
         }
-        val iconSize = (46 * resources.displayMetrics.density).toInt()
+        val iconSize = (40 * resources.displayMetrics.density).toInt()
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
             tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
