@@ -1746,15 +1746,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun readExif(uri: Uri): ExifInterface? {
-        // Eerst de expliciet geselecteerde SAF-foto proberen; originele
-        // MediaStore-toegang kan zonder extra permissie SecurityException geven.
-        // Originele MediaStore-stream eerst: SAF kan GPS-tags door Android maskeren.
-        val original = originalMediaUri(uri)
-        val candidates = listOf(original, uri).distinct()
+        // Lees eerst direct uit de gekozen document-URI; vermijd een trage
+        // MediaStore-zoekactie zolang die niet nodig is.
         var fallback: ExifInterface? = null
-        for (candidate in candidates) {
+        try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val exif = ExifInterface(pfd.fileDescriptor)
+                if (gpsCoordinates(exif) != null) return exif
+                fallback = exif
+            }
+        } catch (_: Exception) {}
+        val original = originalMediaUri(uri)
+        if (original != uri) {
             try {
-                contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
+                contentResolver.openFileDescriptor(original, "r")?.use { pfd ->
                     val exif = ExifInterface(pfd.fileDescriptor)
                     if (gpsCoordinates(exif) != null) return exif
                     if (fallback == null) fallback = exif
@@ -2259,7 +2264,7 @@ class MainActivity : ComponentActivity() {
                 }
                 val rawGps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
                 val gps = rawGps?.let { value ->
-                    val match = Regex("""^\\s*([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)(?:[+-]\\d+(?:\\.\\d+)?)?/?\\s*$""").find(value)
+                    val match = Regex("""^\s*([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)(?:[+-]\d+(?:\.\d+)?)?/?\s*$""").find(value)
                     match?.let {
                         val lat = it.groupValues[1].toDoubleOrNull()
                         val lon = it.groupValues[2].toDoubleOrNull()
