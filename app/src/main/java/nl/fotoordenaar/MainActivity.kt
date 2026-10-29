@@ -311,6 +311,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun mediaDisplayPath(uri: Uri, fallback: String): String {
+        return try {
+            val id = DocumentsContract.getDocumentId(uri)
+            val relative = id.substringAfter(':', "").trimStart('/')
+            if (relative.isNotBlank()) {
+                val volume = id.substringBefore(':', "")
+                val prefix = if (volume.equals("primary", true)) "Interne opslag"
+                    else if (volume.isNotBlank() && volume != id) volume else ""
+                if (prefix.isBlank()) relative else "$prefix/$relative"
+            } else fallback
+        } catch (_: Exception) { fallback }
+    }
+
     private fun openFullScreen(title: String, body: View, dark: Boolean = false) {
         val current = if (screenStack.isEmpty()) homeView else screenStack.lastOrNull()
         if (current != null && (screenStack.isEmpty() || current !== body)) {
@@ -583,7 +596,7 @@ class MainActivity : ComponentActivity() {
                 text = if (fullscreen) "⤡" else "⛶"
             }
         }
-        openFullScreen(entry.name, root, dark = true)
+        openFullScreen(mediaDisplayPath(entry.uri, entry.name), root, dark = true)
         val page = screenStack.lastOrNull() as? LinearLayout
         val toolbar = page?.getChildAt(0) as? LinearLayout
         videoToolbar = toolbar
@@ -1230,7 +1243,7 @@ class MainActivity : ComponentActivity() {
             photoOnlyState = !photoOnlyState
             applyPhotoMode()
         }
-        openFullScreen(name, root, dark = true)
+        openFullScreen(mediaDisplayPath(uri, name), root, dark = true)
         // Gebruik de bestaande bovenste balk: bestandsnaam staat daar al.
         // Plaats beide knoppen rechts, zonder extra regel onder de foto.
         val photoPage = screenStack.lastOrNull() as? LinearLayout
@@ -1374,7 +1387,7 @@ class MainActivity : ComponentActivity() {
     private fun showFolderGallery(folderUri: Uri, folderName: String) {
         val cacheKey = folderUri.toString()
         val loading = TextView(this).apply { text = "Gallery laden…"; textSize = 16f; setPadding(24,24,24,24) }
-        openFullScreen(folderName, loading)
+        openFullScreen(mediaDisplayPath(folderUri, folderName), loading)
         val cached = albumCache[folderUri.toString()]
         if (cached != null) {
             // Het nieuwe Gallery-scherm moet eerst gekoppeld zijn voordat
@@ -1667,7 +1680,7 @@ class MainActivity : ComponentActivity() {
         }
         val rootUri = rootDocumentUri(tree)
         val currentFolder = TextView(this).apply {
-            text = "Huidige map: ${tree.lastPathSegment ?: "Mediamap"}"
+            text = "Huidige map: ${mediaDisplayPath(rootUri, "Mediamap")}"
             textSize = 15f
             setPadding(12, 10, 12, 10)
             setTextColor(Color.rgb(15, 69, 122))
@@ -1808,7 +1821,7 @@ class MainActivity : ComponentActivity() {
                     label.tag = entry.name
                     label.text = caption(entry, all)
                     val toggleAlbum = {
-                        currentFolder.text = "Huidige map: ${entry.name}"
+                        currentFolder.text = "Huidige map: ${mediaDisplayPath(entry.uri, entry.name)}"
                         val expanded = children.visibility != View.VISIBLE
                         children.visibility = if (expanded) View.VISIBLE else View.GONE
                         if (expanded) {
@@ -1895,7 +1908,7 @@ class MainActivity : ComponentActivity() {
         allButton.setOnClickListener {
             expandAll = if (opened.isNotEmpty() || expandAll) false else true
             allButton.text = if (expandAll) "Alles inklappen" else "Alles uitklappen"
-            if (!expandAll) { currentFolder.text = "Huidige map: hoofdalbum"; scroll.smoothScrollTo(0, 0) }
+            if (!expandAll) { currentFolder.text = "Huidige map: ${mediaDisplayPath(rootUri, "hoofdalbum")}"; scroll.smoothScrollTo(0, 0) }
             refresh(expandAll)
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
