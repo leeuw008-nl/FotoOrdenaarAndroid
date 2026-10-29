@@ -330,34 +330,43 @@ class MainActivity : ComponentActivity() {
                 super.onPageFinished(view, url)
                 webView.evaluateJavascript("""
                     (function() {
-                      if (document.getElementById('mv-zoom-level')) return;
-                      var style = document.createElement('style');
-                      style.textContent =
-                        '.leaflet-control-attribution { white-space:nowrap !important; ' +
-                        'max-width:calc(100vw - 10px) !important; overflow-x:auto !important; ' +
-                        'font-size:10px !important; }' +
-                        '#mv-zoom-level { position:fixed;top:9px;right:9px;z-index:9999;' +
-                        'background:white;color:#222;border:1px solid #aaa;border-radius:4px;' +
-                        'padding:5px 7px;font:13px sans-serif;pointer-events:none; }';
-                      document.head.appendChild(style);
-                      var badge = document.createElement('div');
-                      badge.id = 'mv-zoom-level';
-                      badge.textContent = 'Zoom: —';
-                      document.body.appendChild(badge);
-                      function refresh() {
-                        try {
-                          if (typeof map !== 'undefined' && map.getZoom) {
-                            badge.textContent = 'Zoom: ' + map.getZoom();
-                            if (!badge.dataset.bound) {
-                              map.on('zoomend', refresh);
-                              badge.dataset.bound = '1';
-                            }
-                          }
-                        } catch(e) {}
+                      var css = document.getElementById('mv-map-style');
+                      if (!css) {
+                        css = document.createElement('style');
+                        css.id = 'mv-map-style';
+                        css.textContent =
+                          '.leaflet-control-attribution { white-space:nowrap !important;' +
+                          'font-size:10px !important; max-width:100vw !important;' +
+                          'overflow:hidden !important; text-overflow:ellipsis !important; }' +
+                          '.mv-zoom-readout { text-align:center; font:12px/24px sans-serif;' +
+                          'height:24px; background:#fff; color:#222; border-top:1px solid #ccc; }';
+                        document.head.appendChild(css);
                       }
-                      refresh();
-                      document.addEventListener('click', refresh);
-                      document.addEventListener('touchend', refresh);
+                      var zoomControl = document.querySelector('.leaflet-control-zoom');
+                      var container = document.querySelector('.leaflet-container');
+                      if (zoomControl && container && !document.getElementById('mv-zoom-level')) {
+                        var label = document.createElement('div');
+                        label.id = 'mv-zoom-level';
+                        label.className = 'mv-zoom-readout';
+                        zoomControl.appendChild(label);
+                        function updateZoom() {
+                          var match = (container.className || '').match(/leaflet-zoom-(\d+)/);
+                          if (match) label.textContent = 'Z ' + match[1];
+                          else label.textContent = 'Zoom';
+                        }
+                        updateZoom();
+                        var observer = new MutationObserver(updateZoom);
+                        observer.observe(container, {attributes:true, attributeFilter:['class']});
+                        zoomControl.addEventListener('click', function() {
+                          setTimeout(updateZoom, 300);
+                        });
+                      }
+                      var attribution = document.querySelector('.leaflet-control-attribution');
+                      if (attribution) {
+                        attribution.innerHTML =
+                          '© <a href="https://www.openstreetmap.org/copyright" target="_blank">' +
+                          'OpenStreetMap-bijdragers</a>';
+                      }
                     })();
                 """.trimIndent(), null)
             }
@@ -604,9 +613,11 @@ class MainActivity : ComponentActivity() {
         selectTab(false)
         val galleryButton = TextView(this).apply {
             text = "▦"
-            textSize = 26f
+            textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(0, 0, 0, 0)
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Terug naar Gallery"
             setOnClickListener { closeFullScreen() }
@@ -625,9 +636,11 @@ class MainActivity : ComponentActivity() {
         }
         val fullscreenButton = TextView(this).apply {
             text = "⛶"
-            textSize = 26f
+            textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(0, 0, 0, 0)
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Video beeldvullend weergeven"
             setOnClickListener {
@@ -640,7 +653,7 @@ class MainActivity : ComponentActivity() {
         val page = screenStack.lastOrNull() as? LinearLayout
         val toolbar = page?.getChildAt(0) as? LinearLayout
         videoToolbar = toolbar
-        val iconSize = (40 * resources.displayMetrics.density).toInt()
+        val iconSize = (34 * resources.displayMetrics.density).toInt()
         val floatingExit = TextView(this).apply {
             text = "⤡"
             textSize = 26f
@@ -1234,21 +1247,25 @@ class MainActivity : ComponentActivity() {
         selectTab(false)
         val galleryButton = TextView(this).apply {
             text = "▦"
-            textSize = 26f
+            textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(0, 0, 0, 0)
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Open Gallery van dit album"
         }
         val fullscreenButton = TextView(this).apply {
             text = if (photoOnlyState) "⤡" else "⛶"
-            textSize = 26f
+            textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(0, 0, 0, 0)
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Beeldvullende media aan of uit"
         }
-        val iconSize = (40 * resources.displayMetrics.density).toInt()
+        val iconSize = (34 * resources.displayMetrics.density).toInt()
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
             tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
