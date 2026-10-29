@@ -16,6 +16,7 @@ on:
       - fix/mediaverkenner-mp4-reader-2026-10-29
       - test/mediaverkenner-diagnose-metadata-2026-10-29
       - fix/mediaverkenner-diagnose-zonder-native-crash-2026-10-29
+      - fix/mediaverkenner-metadata-scroll-kopieer-2026-10-29
 
 permissions:
   contents: read
