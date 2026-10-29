@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity() {
                 }
                 sourceButton.text = "Andere map kiezen"
                 explorerButton?.isEnabled = true
-                status.text = "Map geselecteerd. FotoVerkenner wordt geopend."
+                status.text = "Map geselecteerd. MediaVerkenner wordt geopend."
                 showExplorer(organizedOnly = false)
             }
         }
@@ -194,7 +194,7 @@ class MainActivity : ComponentActivity() {
             setPadding(28, 32, 28, 24)
         }
         root.addView(TextView(this).apply {
-            text = "FotoVerkenner VideoTest"
+            text = "MediaVerkenner"
             textSize = 23f
         })
         status = TextView(this).apply {
@@ -212,7 +212,7 @@ class MainActivity : ComponentActivity() {
         previewButton = Button(this)
         moveButton = Button(this)
         root.addView(Button(this).apply {
-            text = "FotoVerkenner openen"
+            text = "MediaVerkenner openen"
             isEnabled = sourceTree != null
             setOnClickListener { showExplorer(organizedOnly = false) }
         }.also { explorerButton = it })
@@ -333,8 +333,10 @@ class MainActivity : ComponentActivity() {
             player.start()
         }
         root.addView(videoFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        var navigationBar: LinearLayout? = null
         if (album != null && album.size > 1) {
             val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            navigationBar = navigation
             navigation.addView(Button(this).apply {
                 text = "◀ Vorige"
                 isEnabled = position > 0
@@ -434,10 +436,22 @@ class MainActivity : ComponentActivity() {
             setOnClickListener {
                 fullscreen = !fullscreen
                 tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
+                navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+                setPhotoToolbarOverlay(fullscreen)
+                window.decorView.systemUiVisibility = if (fullscreen) (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) else 0
                 tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
                 text = if (fullscreen) "⤡" else "⛶"
-                videoFrame.layoutParams = LinearLayout.LayoutParams(-1, 0,
-                    if (fullscreen) 1f else 1f)
+                videoFrame.requestLayout()
+                videoFrame.post {
+                    val width = player.width
+                    val height = player.height
+                    val videoWidth = player.videoWidth
+                    val videoHeight = player.videoHeight
+                    if (videoWidth > 0 && videoHeight > 0 && videoFrame.width > 0 && videoFrame.height > 0) {
+                        val scale = minOf(videoFrame.width.toFloat() / videoWidth, videoFrame.height.toFloat() / videoHeight)
+                        player.layoutParams = FrameLayout.LayoutParams((videoWidth * scale).toInt().coerceAtLeast(1), (videoHeight * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
+                    }
+                }
             }
         }
         openFullScreen(entry.name, root, dark = true)
@@ -555,6 +569,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun closeFullScreen() {
+        window.decorView.systemUiVisibility = 0
         if (screenStack.isNotEmpty()) screenStack.removeAt(screenStack.lastIndex)
         val previous = screenStack.lastOrNull() ?: homeView
         if (previous != null) setContentView(previous)
@@ -1480,7 +1495,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("FotoVerkenner VideoTest", root)
+        openFullScreen("MediaVerkenner", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
