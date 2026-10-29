@@ -192,7 +192,7 @@ class MainActivity : ComponentActivity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "FotoOrdenaar"
+            text = "MediaOrdenaar"
             textSize = 23f
         })
 
@@ -529,7 +529,7 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.WHITE)
         }
         details.addView(metadataLabel)
-        // Dezelfde OSM-tabopbouw als de werkende FotoOrdenaar.
+        // Dezelfde OSM-tabopbouw als de werkende MediaOrdenaar.
         val mapHolder = FrameLayout(this)
         val tabBody = FrameLayout(this)
         var mapLoaded = false
@@ -1229,7 +1229,7 @@ class MainActivity : ComponentActivity() {
                         arrow?.text = if (expanded) "▾" else "▸"
                     }
                     arrow?.setOnClickListener { toggleAlbum() }
-                    // Zoals in FotoOrdenaar: tik op de albumnaam voor de galerij.
+                    // Zoals in MediaOrdenaar: tik op de albumnaam voor de galerij.
                     // De enkele en dubbele pijl blijven uitsluitend voor de boomstructuur.
                     label.setOnClickListener {
                         currentFolder.text = "Huidige map: ${entry.name}"
@@ -2212,7 +2212,7 @@ class MainActivity : ComponentActivity() {
                     movementMethod = LinkMovementMethod.getInstance()
                 }
                 AlertDialog.Builder(this)
-                    .setTitle("FotoOrdenaar klaar")
+                    .setTitle("MediaOrdenaar klaar")
                     .setView(albumMessage)
                     .setPositiveButton("OK", null)
                     .show()
