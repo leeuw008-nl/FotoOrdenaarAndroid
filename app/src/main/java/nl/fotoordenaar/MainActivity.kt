@@ -533,6 +533,12 @@ class MainActivity : ComponentActivity() {
         player.setVideoURI(entry.uri)
         photoWorker.execute {
             val (date, gps) = videoMetadata(entry.uri)
+            val gpsDiagnostic = if (gps == null) {
+                val permission = Build.VERSION.SDK_INT < 29 ||
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (!permission) "Android-toestemming voor originele medialocaties ontbreekt."
+                else "Geen GPS-locatie gevonden in de door Android ontsloten videometadata."
+            } else ""
             val dateText = date?.let {
                 SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
             } ?: "niet gevonden"
@@ -544,7 +550,7 @@ class MainActivity : ComponentActivity() {
                 if (root.parent != null) {
                     coords = gps
                     metadataLoaded = true
-                    metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n\n$details"
+                    metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n$gpsDiagnostic\n\n$details"
                     if (showingMap) selectTab(true)
                 }
             }
@@ -2247,7 +2253,7 @@ class MainActivity : ComponentActivity() {
                 }
                 val rawGps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
                 val gps = rawGps?.let { value ->
-                    val match = Regex("""^([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)/?$""").find(value)
+                    val match = Regex("""^\\s*([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)(?:[+-]\\d+(?:\\.\\d+)?)?/?\\s*$""").find(value)
                     match?.let {
                         val lat = it.groupValues[1].toDoubleOrNull()
                         val lon = it.groupValues[2].toDoubleOrNull()
