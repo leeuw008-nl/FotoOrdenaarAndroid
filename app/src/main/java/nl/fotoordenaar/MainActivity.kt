@@ -688,9 +688,15 @@ class MainActivity : ComponentActivity() {
                 field("MIME-type", MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
                 field("Aantal tracks", MediaMetadataRetriever.METADATA_KEY_NUM_TRACKS)
                 field("Framerate", MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE, " fps")
+                field("Opnamedatum (ruw)", MediaMetadataRetriever.METADATA_KEY_DATE)
                 field("Auteur", MediaMetadataRetriever.METADATA_KEY_AUTHOR)
                 field("Album", MediaMetadataRetriever.METADATA_KEY_ALBUM)
                 field("Titel", MediaMetadataRetriever.METADATA_KEY_TITLE)
+                field("Artiest", MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                field("Genre", MediaMetadataRetriever.METADATA_KEY_GENRE)
+                field("Copyright", MediaMetadataRetriever.METADATA_KEY_COPYRIGHT)
+                field("Componist", MediaMetadataRetriever.METADATA_KEY_COMPOSER)
+                field("Schijfnummer", MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
                 field("Encoder", MediaMetadataRetriever.METADATA_KEY_WRITER)
                 field("Opnamelocatie (ruw)", MediaMetadataRetriever.METADATA_KEY_LOCATION)
                 if (lines.isEmpty()) "Geen aanvullende technische metadata gevonden." else lines.joinToString("\n")
@@ -699,42 +705,57 @@ class MainActivity : ComponentActivity() {
         finally { try { r.release() } catch (_: Exception) {} }
     }
 
+    // ISO 6709: +52.12345+006.12345/ (soms met hoogte of ISO-prefix).
+    private fun parseVideoGps(raw: String?): DoubleArray? {
+        if (raw.isNullOrBlank()) return null
+        val match = Regex("""([+-]\\d{1,2}(?:\\.\\d+)?)([+-]\\d{1,3}(?:\\.\\d+)?)""")
+            .find(raw) ?: return null
+        val lat = match.groupValues[1].toDoubleOrNull() ?: return null
+        val lon = match.groupValues[2].toDoubleOrNull() ?: return null
+        return if (lat in -90.0..90.0 && lon in -180.0..180.0 &&
+            (lat != 0.0 || lon != 0.0)) doubleArrayOf(lat, lon) else null
+    }
+
     private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-                retriever.setDataSource(descriptor.fileDescriptor)
-                val rawDate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
-                val date = rawDate?.let { raw ->
-                    listOf("yyyyMMdd'T'HHmmss.SSS'Z'", "yyyyMMdd'T'HHmmss'Z'",
-                        "yyyyMMdd'T'HHmmss.SSSZ", "yyyyMMdd'T'HHmmssZ")
-                        .firstNotNullOfOrNull { pattern ->
-                            try {
-                                SimpleDateFormat(pattern, Locale.US).apply {
-                                    timeZone = java.util.TimeZone.getTimeZone("UTC")
-                                    isLenient = false
-                                }.parse(raw)
-                            } catch (_: Exception) { null }
+        // De originele MediaStore-URI kan locatiegegevens bevatten die in een
+        // gewone content-URI door Android worden afgeschermd.
+        val original = try { originalMediaUri(uri) } catch (_: Exception) { uri }
+        val candidates = listOf(original, uri).distinct()
+        var foundDate: Date? = null
+        var foundGps: DoubleArray? = null
+        for (candidate in candidates) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                contentResolver.openFileDescriptor(candidate, "r")?.use { descriptor ->
+                    retriever.setDataSource(descriptor.fileDescriptor)
+                    val rawDate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                    if (foundDate == null) {
+                        foundDate = rawDate?.let { raw ->
+                            listOf("yyyyMMdd'T'HHmmss.SSS'Z'", "yyyyMMdd'T'HHmmss'Z'",
+                                "yyyyMMdd'T'HHmmss.SSSZ", "yyyyMMdd'T'HHmmssZ")
+                                .firstNotNullOfOrNull { pattern ->
+                                    try {
+                                        SimpleDateFormat(pattern, Locale.US).apply {
+                                            timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                            isLenient = false
+                                        }.parse(raw)
+                                    } catch (_: Exception) { null }
+                                }
                         }
-                }
-                val rawGps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
-                val gps = rawGps?.let { value ->
-                    val match = Regex("""^\s*([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)(?:[+-]\d+(?:\.\d+)?)?/?\s*$""").find(value)
-                    match?.let {
-                        val lat = it.groupValues[1].toDoubleOrNull()
-                        val lon = it.groupValues[2].toDoubleOrNull()
-                        if (lat != null && lon != null && lat in -90.0..90.0 &&
-                            lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
-                            doubleArrayOf(lat, lon) else null
+                    }
+                    if (foundGps == null) {
+                        foundGps = parseVideoGps(
+                            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION))
                     }
                 }
-                Pair(date, gps)
-            } ?: Pair(null, null)
-        } catch (_: Exception) {
-            Pair(null, null)
-        } finally {
-            try { retriever.release() } catch (_: Exception) {}
+            } catch (_: Exception) {
+                // Probeer de oorspronkelijke SAF-URI wanneer MediaStore is afgeschermd.
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+            if (foundDate != null && foundGps != null) break
         }
+        return Pair(foundDate, foundGps)
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
