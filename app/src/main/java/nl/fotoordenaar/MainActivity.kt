@@ -170,11 +170,12 @@ class MainActivity : ComponentActivity() {
                     .edit().putString("selected_tree", uri.toString()).apply()
                 try {
                     contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                     )
                 } catch (_: SecurityException) {}
-                status.text = "Mediamap geselecteerd. Tik op Verkenner openen."
-                showExplorer(organizedOnly = false)
+                status.text = "Bronmap gekozen. Controleer eerst het analysevoorbeeld."
+                previewReady = false
+                previewPlans = null
             }
         }
 
@@ -195,26 +196,34 @@ class MainActivity : ComponentActivity() {
             setPadding(20, 24, 20, 20)
         }
         root.addView(TextView(this).apply {
-            text = "MediaVerkenner"
+            text = "MediaOrdenaar"
             textSize = 24f
         })
         status = TextView(this).apply {
-            text = "Kies een mediamap om albums, galerij, metadata en kaart te bekijken."
+            text = "Kies een bronmap. Bekijk eerst het analysevoorbeeld voordat je media verplaatst."
             textSize = 15f
             setPadding(4, 20, 4, 20)
         }
         root.addView(status)
         sourceButton = Button(this).apply {
-            text = "Mediamap kiezen"
+            text = "1. Bronmap kiezen"
             setOnClickListener {
                 pickFolder.launch(null)
             }
         }
         root.addView(sourceButton)
-        previewButton = Button(this)
-        moveButton = Button(this)
+        previewButton = Button(this).apply {
+            text = "2. Media analyseren (voorbeeld)"
+            setOnClickListener { previewFiles() }
+        }
+        root.addView(previewButton)
+        moveButton = Button(this).apply {
+            text = "3. Media verplaatsen"
+            setOnClickListener { confirmAndRun() }
+        }
+        root.addView(moveButton)
         root.addView(Button(this).apply {
-            text = "Verkenner openen"
+            text = "MediaOrdenaar openen"
             setOnClickListener { showExplorer(organizedOnly = false) }
         })
         homeView = root
@@ -1965,7 +1974,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("MediaVerkenner", root)
+        openFullScreen("MediaOrdenaar", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
@@ -2451,8 +2460,12 @@ class MainActivity : ComponentActivity() {
         return "${uriAccessDiagnostic(uri)}\n$result\n$xmpInfo"
     }
 
+    private val analysisLocationCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private fun locationFolder(exif: ExifInterface?, coordsOverride: DoubleArray? = null): String {
         val coords = coordsOverride ?: gpsCoordinates(exif) ?: return "Onbekende locatie"
+        val locationKey = "%.4f,%.4f".format(Locale.US, coords[0], coords[1])
+        analysisLocationCache[locationKey]?.let { return it }
 
         return try {
             val geocoder = Geocoder(this, Locale("nl", "NL"))
@@ -2496,7 +2509,7 @@ class MainActivity : ComponentActivity() {
                     ?: "Locatie onbekend"
             )
 
-            "${gemeente}_${plaats}_${locatie}"
+            "${gemeente}_${plaats}_${locatie}".also { analysisLocationCache[locationKey] = it }
         } catch (_: Exception) {
             gpsFolder(coords)
         }
