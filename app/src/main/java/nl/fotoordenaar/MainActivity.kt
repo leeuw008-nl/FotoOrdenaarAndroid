@@ -502,8 +502,17 @@ class MainActivity : ComponentActivity() {
         var coords: DoubleArray? = null
         var metadataLoaded = false
         var showingMap = false
+        fun updateTabColors() {
+            val green = android.content.res.ColorStateList.valueOf(Color.rgb(67, 160, 71))
+            val gray = android.content.res.ColorStateList.valueOf(Color.rgb(170, 170, 170))
+            metadataButton.backgroundTintList = if (metadataLoaded) green else gray
+            mapButton.backgroundTintList = if (coords != null) green else gray
+            metadataButton.setTextColor(Color.WHITE)
+            mapButton.setTextColor(Color.WHITE)
+        }
         fun selectTab(map: Boolean) {
             showingMap = map
+            updateTabColors()
             metadataButton.text = if (map) "Metadata" else "● Metadata"
             mapButton.text = if (map) "● Kaart" else "Kaart"
             tabBody.removeAllViews()
@@ -667,6 +676,7 @@ class MainActivity : ComponentActivity() {
                     if (root.parent != null) {
                         coords = gps
                         metadataLoaded = true
+                        updateTabColors()
                         metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n\n$details"
                         if (showingMap) selectTab(true)
                     }
@@ -674,6 +684,7 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 runOnUiThread {
                     metadataLoaded = true
+                    updateTabColors()
                     metadata.text = "Videometadata niet volledig beschikbaar: ${e.javaClass.simpleName}: ${e.message}"
                     if (showingMap) selectTab(true)
                 }
