@@ -9,7 +9,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "nl.fotoverkenner.backuptest"
+        applicationId = "nl.mediaverkenner"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
