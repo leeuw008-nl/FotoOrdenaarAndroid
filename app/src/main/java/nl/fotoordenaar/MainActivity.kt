@@ -499,7 +499,7 @@ class MainActivity : ComponentActivity() {
         val metadataScroll = android.widget.ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(Color.WHITE)
-            addView(metadata, android.widget.ScrollView.LayoutParams(-1, -2))
+            addView(metadata, android.widget.FrameLayout.LayoutParams(-1, -2))
         }
         var coords: DoubleArray? = null
         var metadataLoaded = false
