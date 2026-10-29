@@ -646,36 +646,35 @@ class MainActivity : ComponentActivity() {
         }
         player.setVideoURI(entry.uri)
         photoWorker.execute {
-            val (date, gps) = videoMetadata(entry.uri)
-            val gpsDiagnostic = if (gps == null) {
-                val permission = Build.VERSION.SDK_INT < 29 ||
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
-                if (!permission) "Android-toestemming voor originele medialocaties ontbreekt."
-                else "Geen GPS-locatie gevonden in de door Android ontsloten videometadata."
-            } else ""
-            val dateText = date?.let {
-                SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
-            } ?: "niet gevonden"
-            val containerTags = videoContainerTags(entry.uri)
-            val extraDetails = containerTags.joinToString("\n") { (name, value) -> "$name: $value" }
-            val mediaInfoReport = nativeMediaInfo(entry.uri)
-            val details = "=== 1. MediaInfoLib (ruwe uitvoer) ===\n" + mediaInfoReport +
-                "\n\n=== 2. MP4-containergegevens ===\n" +
-                (if (extraDetails.isNotEmpty()) extraDetails else "[Geen tags gevonden]") +
-                "\n\n=== 3. Android-metadata en diagnose ===\n" +
-                videoTechnicalInfo(entry.uri) +
-                "\n\n=== 4. Audio ===\n" + videoAudioTracks(entry.uri) +
-                "\n\n=== 5. GPS / ruwe MP4-controle ===\n" + videoRawLocationDiagnostics(entry.uri) +
-                "\nMP4-tag-aantal: ${containerTags.size}\nGPS uit uitleesmethoden: " +
-                (if (gps != null) "gevonden" else "niet gevonden")
-            val gpsText = gps?.let {
-                "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
-            } ?: "niet gevonden"
-            runOnUiThread {
-                if (root.parent != null) {
-                    coords = gps
+            try {
+                val (date, gps) = videoMetadata(entry.uri)
+                val dateText = date?.let {
+                    SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
+                } ?: "niet gevonden"
+                val gpsText = gps?.let {
+                    "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
+                } ?: "niet gevonden"
+                val tags = videoContainerTags(entry.uri)
+                val audio = tags.filter { (name, _) -> name.startsWith("MP4 Sound") }
+                    .joinToString("\n") { (name, value) -> "${name.substringAfter(" / ")}: $value" }
+                    .ifBlank { "Geen audio-informatie gevonden in de MP4-container." }
+                val details = "=== MP4-containergegevens ===\n" +
+                    tags.joinToString("\n") { (name, value) -> "$name: $value" } +
+                    "\n\n=== Audio ===\n" + audio +
+                    "\n\n=== Android-metadata ===\n" + videoTechnicalInfo(entry.uri) +
+                    "\n\nGPS: $gpsText"
+                runOnUiThread {
+                    if (root.parent != null) {
+                        coords = gps
+                        metadataLoaded = true
+                        metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n\n$details"
+                        if (showingMap) selectTab(true)
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
                     metadataLoaded = true
-                    metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n$gpsDiagnostic\n\n$details"
+                    metadata.text = "Videometadata niet volledig beschikbaar: ${e.javaClass.simpleName}: ${e.message}"
                     if (showingMap) selectTab(true)
                 }
             }
