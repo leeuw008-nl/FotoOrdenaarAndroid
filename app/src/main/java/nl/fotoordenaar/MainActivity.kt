@@ -426,6 +426,26 @@ class MainActivity : ComponentActivity() {
             setOnClickListener { closeFullScreen() }
         }
         var fullscreen = false
+        var videoToolbar: LinearLayout? = null
+        fun updateVideoLayout() {
+            tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            videoToolbar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            window.decorView.systemUiVisibility = if (fullscreen)
+                (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+                else 0
+            videoFrame.post {
+                val w = player.videoWidth
+                val h = player.videoHeight
+                if (w > 0 && h > 0 && videoFrame.width > 0 && videoFrame.height > 0) {
+                    val scale = minOf(videoFrame.width.toFloat() / w, videoFrame.height.toFloat() / h)
+                    player.layoutParams = FrameLayout.LayoutParams(
+                        (w * scale).toInt().coerceAtLeast(1),
+                        (h * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
+                }
+            }
+        }
         val fullscreenButton = TextView(this).apply {
             text = "⛶"
             textSize = 26f
@@ -435,29 +455,37 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Video beeldvullend weergeven"
             setOnClickListener {
                 fullscreen = !fullscreen
-                tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
-                navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
-                setPhotoToolbarOverlay(fullscreen)
-                window.decorView.systemUiVisibility = if (fullscreen) (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) else 0
-                tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
+                updateVideoLayout()
                 text = if (fullscreen) "⤡" else "⛶"
-                videoFrame.requestLayout()
-                videoFrame.post {
-                    val width = player.width
-                    val height = player.height
-                    val videoWidth = player.videoWidth
-                    val videoHeight = player.videoHeight
-                    if (videoWidth > 0 && videoHeight > 0 && videoFrame.width > 0 && videoFrame.height > 0) {
-                        val scale = minOf(videoFrame.width.toFloat() / videoWidth, videoFrame.height.toFloat() / videoHeight)
-                        player.layoutParams = FrameLayout.LayoutParams((videoWidth * scale).toInt().coerceAtLeast(1), (videoHeight * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
-                    }
-                }
             }
         }
         openFullScreen(entry.name, root, dark = true)
         val page = screenStack.lastOrNull() as? LinearLayout
         val toolbar = page?.getChildAt(0) as? LinearLayout
+        videoToolbar = toolbar
         val iconSize = (46 * resources.displayMetrics.density).toInt()
+        val floatingExit = TextView(this).apply {
+            text = "⤡"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(160, 0, 0, 0))
+            contentDescription = "Fullscreen verlaten"
+            visibility = View.GONE
+            setOnClickListener {
+                fullscreen = false
+                updateVideoLayout()
+                visibility = View.GONE
+                fullscreenButton.text = "⛶"
+            }
+        }
+        videoFrame.addView(floatingExit, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.TOP or Gravity.END))
+        fullscreenButton.setOnClickListener {
+            fullscreen = !fullscreen
+            floatingExit.visibility = if (fullscreen) View.VISIBLE else View.GONE
+            fullscreenButton.text = if (fullscreen) "⤡" else "⛶"
+            updateVideoLayout()
+        }
         toolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
         toolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         val controller = MediaController(this)
@@ -474,6 +502,7 @@ class MainActivity : ComponentActivity() {
             val dateText = date?.let {
                 SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
             } ?: "niet gevonden"
+            val details = videoTechnicalInfo(entry.uri)
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
@@ -481,7 +510,7 @@ class MainActivity : ComponentActivity() {
                 if (root.parent != null) {
                     coords = gps
                     metadataLoaded = true
-                    metadata.text = "Video: ${entry.name}\\nOpnamedatum: $dateText\\nGPS: $gpsText"
+                    metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n\n$details"
                     if (showingMap) selectTab(true)
                 }
             }
@@ -2123,6 +2152,38 @@ class MainActivity : ComponentActivity() {
 
     private fun isVideo(name: String): Boolean =
         name.matches(Regex("(?i).+\\.(mp4|mov|m4v|3gp|webm|mkv)$"))
+
+    private fun videoTechnicalInfo(uri: Uri): String {
+        val r = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                r.setDataSource(fd.fileDescriptor)
+                val lines = mutableListOf<String>()
+                fun field(label: String, key: Int, suffix: String = "") {
+                    r.extractMetadata(key)?.takeIf { it.isNotBlank() }?.let {
+                        lines.add("$label: $it$suffix")
+                    }
+                }
+                field("Breedte", MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH, " px")
+                field("Hoogte", MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT, " px")
+                field("Rotatie", MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION, "°")
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                    lines.add("Duur: ${it / 60000}m ${(it / 1000) % 60}s")
+                }
+                field("Videobitrate", MediaMetadataRetriever.METADATA_KEY_BITRATE, " bit/s")
+                field("MIME-type", MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+                field("Aantal tracks", MediaMetadataRetriever.METADATA_KEY_NUM_TRACKS)
+                field("Framerate", MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE, " fps")
+                field("Auteur", MediaMetadataRetriever.METADATA_KEY_AUTHOR)
+                field("Album", MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                field("Titel", MediaMetadataRetriever.METADATA_KEY_TITLE)
+                field("Encoder", MediaMetadataRetriever.METADATA_KEY_WRITER)
+                field("Opnamelocatie (ruw)", MediaMetadataRetriever.METADATA_KEY_LOCATION)
+                if (lines.isEmpty()) "Geen aanvullende technische metadata gevonden." else lines.joinToString("\\n")
+            } ?: "Bestand niet leesbaar."
+        } catch (e: Exception) { "Technische metadata niet beschikbaar: ${e.message}" }
+        finally { try { r.release() } catch (_: Exception) {} }
+    }
 
     private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
         val retriever = MediaMetadataRetriever()
