@@ -1,0 +1,42 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Gradle 8.9
+        run: |
+          wget https://services.gradle.org/distributions/gradle-8.9-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Apply Android activity compatibility fix
+        run: |
+          sed -i 's/import android.app.Activity/import androidx.activity.ComponentActivity/' app/src/main/java/nl/fotoordenaar/MainActivity.kt
+          sed -i 's/class MainActivity : Activity()/class MainActivity : ComponentActivity()/' app/src/main/java/nl/fotoordenaar/MainActivity.kt
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaOrdenaar-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
