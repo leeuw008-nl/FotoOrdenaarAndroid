@@ -494,6 +494,12 @@ class MainActivity : ComponentActivity() {
             setPadding(18, 18, 18, 18)
             setTextColor(Color.BLACK)
             setBackgroundColor(Color.WHITE)
+            setTextIsSelectable(true)
+        }
+        val metadataScroll = android.widget.ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(Color.WHITE)
+            addView(metadata, android.widget.ScrollView.LayoutParams(-1, -2))
         }
         var coords: DoubleArray? = null
         var metadataLoaded = false
@@ -504,8 +510,8 @@ class MainActivity : ComponentActivity() {
             mapButton.text = if (map) "● Kaart" else "Kaart"
             tabBody.removeAllViews()
             if (!map) {
-                (metadata.parent as? ViewGroup)?.removeView(metadata)
-                tabBody.addView(metadata, FrameLayout.LayoutParams(-1, -1))
+                (metadataScroll.parent as? ViewGroup)?.removeView(metadataScroll)
+                tabBody.addView(metadataScroll, FrameLayout.LayoutParams(-1, -1))
             } else {
                 val position = coords
                 val view: View = if (!metadataLoaded) TextView(this).apply {
