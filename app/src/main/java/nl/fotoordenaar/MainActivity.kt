@@ -862,10 +862,47 @@ class MainActivity : ComponentActivity() {
         return null
     }
 
+    private fun originalVideoMediaUri(uri: Uri): Uri {
+        if (Build.VERSION.SDK_INT < 29) return uri
+        if (uri.authority == MediaStore.AUTHORITY) {
+            return try { MediaStore.setRequireOriginal(uri) } catch (_: Exception) { uri }
+        }
+        val name = displayName(uri)
+        val size = try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+            }
+        } catch (_: Exception) { null }
+        val documentPath = try {
+            if (uri.authority == "com.android.externalstorage.documents")
+                DocumentsContract.getDocumentId(uri).substringAfter(':', "").replace('\\', '/')
+            else null
+        } catch (_: Exception) { null }
+        val relativePath = documentPath?.substringBeforeLast('/', "")?.trimEnd('/')
+        return try {
+            val matches = mutableListOf<Uri>()
+            val projection = arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.RELATIVE_PATH)
+            contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection,
+                "${MediaStore.Video.Media.DISPLAY_NAME} = ?", arrayOf(name), null)?.use { c ->
+                while (c.moveToNext()) {
+                    val fileSize = c.getLong(1)
+                    val folder = c.getString(2)?.replace('\\', '/')?.trimEnd('/')
+                    if ((size == null || size == fileSize) &&
+                        (relativePath == null || relativePath == folder)) {
+                        matches.add(android.content.ContentUris.withAppendedId(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, c.getLong(0)))
+                    }
+                }
+            }
+            if (matches.size == 1) MediaStore.setRequireOriginal(matches.first()) else uri
+        } catch (_: Exception) { uri }
+    }
+
     private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
         // De originele MediaStore-URI kan locatiegegevens bevatten die in een
         // gewone content-URI door Android worden afgeschermd.
-        val original = try { originalMediaUri(uri) } catch (_: Exception) { uri }
+        val original = try { originalVideoMediaUri(uri) } catch (_: Exception) { uri }
         val candidates = listOf(original, uri).distinct()
         var foundDate: Date? = null
         var foundGps: DoubleArray? = null
