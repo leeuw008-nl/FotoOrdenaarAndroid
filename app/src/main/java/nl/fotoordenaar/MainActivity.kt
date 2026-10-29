@@ -654,7 +654,8 @@ class MainActivity : ComponentActivity() {
             } ?: "niet gevonden"
             val containerTags = videoContainerTags(entry.uri)
             val extraDetails = containerTags.joinToString("\\n") { (name, value) -> "$name: $value" }
-            val details = videoTechnicalInfo(entry.uri) + if (extraDetails.isNotEmpty()) "\\n\\nMP4 / QuickTime metadata:\\n$extraDetails" else ""
+            val mediaInfoReport = nativeMediaInfo(entry.uri)
+            val details = videoTechnicalInfo(entry.uri) + "\n\nMediaInfoLib:\n" + mediaInfoReport + if (extraDetails.isNotEmpty()) "\\n\\nMP4 / QuickTime metadata:\\n$extraDetails" else ""
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
@@ -715,6 +716,31 @@ class MainActivity : ComponentActivity() {
         val lon = match.groupValues[2].toDoubleOrNull() ?: return null
         return if (lat in -90.0..90.0 && lon in -180.0..180.0 &&
             (lat != 0.0 || lon != 0.0)) doubleArrayOf(lat, lon) else null
+    }
+
+    private fun nativeMediaInfo(uri: Uri): String {
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                val fd = android.os.ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd()
+                try {
+                    net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
+                        fd, "video.mp4", "Text") ?: ""
+                } finally {
+                    android.os.ParcelFileDescriptor.adoptFd(fd).close()
+                }
+            } ?: ""
+        } catch (e: Exception) { "MediaInfo-fout: ${e.message}" }
+    }
+
+    private fun nativeMediaInfoGps(uri: Uri): DoubleArray? {
+        val report = nativeMediaInfo(uri)
+        for (line in report.lineSequence()) {
+            if (line.contains("location", true) || line.contains("coordinates", true) ||
+                line.contains("gps", true) || line.contains("ISO6709", true)) {
+                parseVideoGps(line)?.let { return it }
+            }
+        }
+        return null
     }
 
     private fun videoContainerTags(uri: Uri): List<Pair<String, String>> {
@@ -784,7 +810,7 @@ class MainActivity : ComponentActivity() {
             }
             if (foundDate != null && foundGps != null) break
         }
-        return Pair(foundDate, foundGps ?: videoContainerGps(uri))
+        return Pair(foundDate, foundGps ?: nativeMediaInfoGps(uri) ?: videoContainerGps(uri))
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
