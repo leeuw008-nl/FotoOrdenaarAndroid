@@ -41,6 +41,9 @@ import android.util.LruCache
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.widget.VideoView
+import android.widget.MediaController
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.activity.ComponentActivity
@@ -289,7 +292,7 @@ class MainActivity : ComponentActivity() {
         val n = entry.name.lowercase(Locale.ROOT)
         return !entry.isDirectory && (n.endsWith(".jpg") || n.endsWith(".jpeg") ||
             n.endsWith(".png") || n.endsWith(".webp") || n.endsWith(".heic") ||
-            n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp"))
+            n.endsWith(".heif") || n.endsWith(".gif") || n.endsWith(".bmp") || isVideo(n))
     }
 
     private fun loadSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
@@ -382,6 +385,356 @@ class MainActivity : ComponentActivity() {
     @Deprecated("Use system back navigation")
     override fun onBackPressed() {
         if (screenStack.isNotEmpty()) closeFullScreen() else super.onBackPressed()
+    }
+
+    private fun isVideoEntry(entry: ExplorerEntry): Boolean =
+        !entry.isDirectory && isVideo(entry.name)
+
+    private fun videoFrame(uri: Uri): Bitmap? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                retriever.setDataSource(fd.fileDescriptor)
+                val frame = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: retriever.getFrameAtTime()
+                frame?.let {
+                    val scale = minOf(1f, 350f / maxOf(it.width, it.height).coerceAtLeast(1))
+                    if (scale < 1f) Bitmap.createScaledBitmap(it,
+                        (it.width * scale).toInt().coerceAtLeast(1),
+                        (it.height * scale).toInt().coerceAtLeast(1), true) else it
+                }
+            }
+        } catch (_: Exception) { null }
+        finally { try { retriever.release() } catch (_: Exception) {} }
+    }
+
+    private fun openMedia(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
+        if (isVideoEntry(entry)) openVideo(entry, album, position, fromGallery)
+        else showFullscreenPhoto(entry.uri, entry.name, album, position, fromGallery = fromGallery)
+    }
+
+    private fun openVideo(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
+        val player = VideoView(this)
+        var videoPixelWidth = 0
+        var videoPixelHeight = 0
+        val videoFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        fun fitVideoToFrame() {
+            val w = videoPixelWidth
+            val h = videoPixelHeight
+            val fw = videoFrame.width
+            val fh = videoFrame.height
+            if (w > 0 && h > 0 && fw > 0 && fh > 0) {
+                val scale = minOf(fw.toFloat() / w, fh.toFloat() / h)
+                val newWidth = (w * scale).toInt().coerceAtLeast(1)
+                val newHeight = (h * scale).toInt().coerceAtLeast(1)
+                if (player.layoutParams.width != newWidth || player.layoutParams.height != newHeight)
+                    player.layoutParams = FrameLayout.LayoutParams(newWidth, newHeight, Gravity.CENTER)
+            }
+        }
+        videoFrame.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)
+                fitVideoToFrame()
+        }
+        // Centreer staande video's en behoud de oorspronkelijke beeldverhouding.
+        player.setOnPreparedListener { media ->
+            val width = media.videoWidth
+            val height = media.videoHeight
+            videoPixelWidth = width
+            videoPixelHeight = height
+            videoFrame.post { fitVideoToFrame() }
+            player.start()
+        }
+        root.addView(videoFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        var navigationBar: LinearLayout? = null
+        if (album != null && album.size > 1) {
+            val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            navigationBar = navigation
+            navigation.addView(Button(this).apply {
+                text = "◀ Vorige"
+                isEnabled = position > 0
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position - 1], album, position - 1, fromGallery)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(TextView(this).apply {
+                text = "${position + 1} / ${album.size}"
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(Button(this).apply {
+                text = "Volgende ▶"
+                isEnabled = position < album.lastIndex
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position + 1], album, position + 1, fromGallery)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            root.addView(navigation)
+        }
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val metadataButton = Button(this).apply { text = "● Metadata" }
+        val mapButton = Button(this).apply { text = "Kaart" }
+        tabs.addView(metadataButton, LinearLayout.LayoutParams(0, -2, 1f))
+        tabs.addView(mapButton, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(tabs)
+        val tabBody = FrameLayout(this)
+        root.addView(tabBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        val metadata = TextView(this).apply {
+            text = "Videometadata laden…"
+            textSize = 15f
+            setPadding(18, 18, 18, 18)
+            setTextColor(Color.BLACK)
+            setBackgroundColor(Color.WHITE)
+        }
+        var coords: DoubleArray? = null
+        var metadataLoaded = false
+        var showingMap = false
+        fun selectTab(map: Boolean) {
+            showingMap = map
+            metadataButton.text = if (map) "Metadata" else "● Metadata"
+            mapButton.text = if (map) "● Kaart" else "Kaart"
+            tabBody.removeAllViews()
+            if (!map) {
+                (metadata.parent as? ViewGroup)?.removeView(metadata)
+                tabBody.addView(metadata, FrameLayout.LayoutParams(-1, -1))
+            } else {
+                val position = coords
+                val view: View = if (!metadataLoaded) TextView(this).apply {
+                    text = "GPS-locatie lezen…"
+                    setTextColor(Color.BLACK)
+                    setBackgroundColor(Color.WHITE)
+                    setPadding(20, 20, 20, 20)
+                } else if (position == null) TextView(this).apply {
+                    text = "Geen leesbare GPS-coördinaten gevonden.\nControleer of de app toegang tot originele videolocaties heeft."
+                    setTextColor(Color.BLACK)
+                    setBackgroundColor(Color.WHITE)
+                    textSize = 15f
+                    setPadding(20, 20, 20, 20)
+                } else WebView(this).apply {
+                    setBackgroundColor(Color.WHITE)
+                    settings.javaScriptEnabled = true
+                    webViewClient = WebViewClient()
+                    val lat = position[0]
+                    val lon = position[1]
+                    val delta = 0.008
+                    loadUrl("https://www.openstreetmap.org/export/embed.html?bbox=" +
+                        "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
+                        "&layer=mapnik&marker=${lat}%2C${lon}")
+                }
+                tabBody.addView(view, FrameLayout.LayoutParams(-1, -1))
+            }
+        }
+        metadataButton.setOnClickListener { selectTab(false) }
+        mapButton.setOnClickListener { selectTab(true) }
+        selectTab(false)
+        val galleryButton = TextView(this).apply {
+            text = "▦"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Terug naar Gallery"
+            setOnClickListener { closeFullScreen() }
+        }
+        var fullscreen = false
+        var videoToolbar: LinearLayout? = null
+        fun updateVideoLayout() {
+            tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            videoToolbar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            window.decorView.systemUiVisibility = if (fullscreen)
+                (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+                else 0
+            videoFrame.post { fitVideoToFrame() }
+        }
+        val fullscreenButton = TextView(this).apply {
+            text = "⛶"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(155, 0, 0, 0))
+            contentDescription = "Video beeldvullend weergeven"
+            setOnClickListener {
+                fullscreen = !fullscreen
+                updateVideoLayout()
+                text = if (fullscreen) "⤡" else "⛶"
+            }
+        }
+        openFullScreen(entry.name, root, dark = true)
+        val page = screenStack.lastOrNull() as? LinearLayout
+        val toolbar = page?.getChildAt(0) as? LinearLayout
+        videoToolbar = toolbar
+        val iconSize = (46 * resources.displayMetrics.density).toInt()
+        val floatingExit = TextView(this).apply {
+            text = "⤡"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(160, 0, 0, 0))
+            contentDescription = "Fullscreen verlaten"
+            visibility = View.GONE
+            setOnClickListener {
+                fullscreen = false
+                updateVideoLayout()
+                visibility = View.GONE
+                fullscreenButton.text = "⛶"
+            }
+        }
+        videoFrame.addView(floatingExit, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.TOP or Gravity.END))
+        if (album != null && album.size > 1) {
+            val navOverlay = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                setBackgroundColor(Color.argb(120, 0, 0, 0))
+            }
+            val prev = Button(this).apply {
+                text = "◀"
+                isEnabled = position > 0
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position - 1], album, position - 1, fromGallery)
+                }
+            }
+            val next = Button(this).apply {
+                text = "▶"
+                isEnabled = position < album.lastIndex
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position + 1], album, position + 1, fromGallery)
+                }
+            }
+            navOverlay.addView(prev)
+            navOverlay.addView(TextView(this).apply {
+                text = "${position + 1} / ${album.size}"
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navOverlay.addView(next)
+            videoFrame.addView(navOverlay, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            videoFrame.setOnClickListener { navOverlay.visibility = if (navOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        }
+        fullscreenButton.setOnClickListener {
+            fullscreen = !fullscreen
+            floatingExit.visibility = if (fullscreen) View.VISIBLE else View.GONE
+            fullscreenButton.text = if (fullscreen) "⤡" else "⛶"
+            updateVideoLayout()
+        }
+        toolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
+        toolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
+        val controller = MediaController(this)
+        controller.setAnchorView(player)
+        player.setMediaController(controller)
+        // Afmetingen en afspelen worden hierboven bij OnPrepared ingesteld.
+        player.setOnErrorListener { _, _, _ ->
+            metadata.text = "Video kan niet worden afgespeeld: ${entry.name}"
+            true
+        }
+        player.setVideoURI(entry.uri)
+        photoWorker.execute {
+            val (date, gps) = videoMetadata(entry.uri)
+            val gpsDiagnostic = if (gps == null) {
+                val permission = Build.VERSION.SDK_INT < 29 ||
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (!permission) "Android-toestemming voor originele medialocaties ontbreekt."
+                else "Geen GPS-locatie gevonden in de door Android ontsloten videometadata."
+            } else ""
+            val dateText = date?.let {
+                SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
+            } ?: "niet gevonden"
+            val details = videoTechnicalInfo(entry.uri)
+            val gpsText = gps?.let {
+                "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
+            } ?: "niet gevonden"
+            runOnUiThread {
+                if (root.parent != null) {
+                    coords = gps
+                    metadataLoaded = true
+                    metadata.text = "Video: ${entry.name}\nOpnamedatum: $dateText\nGPS: $gpsText\n$gpsDiagnostic\n\n$details"
+                    if (showingMap) selectTab(true)
+                }
+            }
+        }
+    }
+
+    private fun isVideoEntry(entry: ExplorerEntry): Boolean =
+        !entry.isDirectory && isVideo(entry.name)
+
+    private fun videoTechnicalInfo(uri: Uri): String {
+        val r = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                r.setDataSource(fd.fileDescriptor)
+                val lines = mutableListOf<String>()
+                fun field(label: String, key: Int, suffix: String = "") {
+                    r.extractMetadata(key)?.takeIf { it.isNotBlank() }?.let {
+                        lines.add("$label: $it$suffix")
+                    }
+                }
+                field("Breedte", MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH, " px")
+                field("Hoogte", MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT, " px")
+                field("Rotatie", MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION, "°")
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                    lines.add("Duur: ${it / 60000}m ${(it / 1000) % 60}s")
+                }
+                field("Videobitrate", MediaMetadataRetriever.METADATA_KEY_BITRATE, " bit/s")
+                field("MIME-type", MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+                field("Aantal tracks", MediaMetadataRetriever.METADATA_KEY_NUM_TRACKS)
+                field("Framerate", MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE, " fps")
+                field("Auteur", MediaMetadataRetriever.METADATA_KEY_AUTHOR)
+                field("Album", MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                field("Titel", MediaMetadataRetriever.METADATA_KEY_TITLE)
+                field("Encoder", MediaMetadataRetriever.METADATA_KEY_WRITER)
+                field("Opnamelocatie (ruw)", MediaMetadataRetriever.METADATA_KEY_LOCATION)
+                if (lines.isEmpty()) "Geen aanvullende technische metadata gevonden." else lines.joinToString("\n")
+            } ?: "Bestand niet leesbaar."
+        } catch (e: Exception) { "Technische metadata niet beschikbaar: ${e.message}" }
+        finally { try { r.release() } catch (_: Exception) {} }
+    }
+
+    private fun videoMetadata(uri: Uri): Pair<Date?, DoubleArray?> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                retriever.setDataSource(descriptor.fileDescriptor)
+                val rawDate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                val date = rawDate?.let { raw ->
+                    listOf("yyyyMMdd'T'HHmmss.SSS'Z'", "yyyyMMdd'T'HHmmss'Z'",
+                        "yyyyMMdd'T'HHmmss.SSSZ", "yyyyMMdd'T'HHmmssZ")
+                        .firstNotNullOfOrNull { pattern ->
+                            try {
+                                SimpleDateFormat(pattern, Locale.US).apply {
+                                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                    isLenient = false
+                                }.parse(raw)
+                            } catch (_: Exception) { null }
+                        }
+                }
+                val rawGps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION)
+                val gps = rawGps?.let { value ->
+                    val match = Regex("""^\s*([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)(?:[+-]\d+(?:\.\d+)?)?/?\s*$""").find(value)
+                    match?.let {
+                        val lat = it.groupValues[1].toDoubleOrNull()
+                        val lon = it.groupValues[2].toDoubleOrNull()
+                        if (lat != null && lon != null && lat in -90.0..90.0 &&
+                            lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
+                            doubleArrayOf(lat, lon) else null
+                    }
+                }
+                Pair(date, gps)
+            } ?: Pair(null, null)
+        } catch (_: Exception) {
+            Pair(null, null)
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
