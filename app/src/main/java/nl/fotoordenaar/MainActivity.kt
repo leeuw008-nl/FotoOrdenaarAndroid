@@ -1176,10 +1176,16 @@ class MainActivity : ComponentActivity() {
             val pins = mutableListOf<Triple<Int, Double, Double>>()
             photos.forEachIndexed { index, photo ->
                 val coords = try {
-                    cachedGpsCoordinates(photo.name)
-                        ?: gpsCoordinates(readExif(photo.uri))
-                        ?: alternateGpsCoordinates(photo.uri)
-                        ?: xmpGpsCoordinates(photo.uri)
+                    if (isVideoEntry(photo)) {
+                        // Video's nooit via de foto-EXIF/XMP-scanners openen:
+                        // die kunnen een volledig videobestand in het geheugen laden.
+                        videoMetadata(photo.uri).second
+                    } else {
+                        cachedGpsCoordinates(photo.name)
+                            ?: gpsCoordinates(readExif(photo.uri))
+                            ?: alternateGpsCoordinates(photo.uri)
+                            ?: xmpGpsCoordinates(photo.uri)
+                    }
                 } catch (_: Exception) { null }
                 if (coords != null && coords.size >= 2 && coords[0].isFinite() && coords[1].isFinite() &&
                     coords[0] in -90.0..90.0 && coords[1] in -180.0..180.0 &&
