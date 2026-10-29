@@ -1093,6 +1093,20 @@ class MainActivity : ComponentActivity() {
         val mapHolder = FrameLayout(this)
         val tabBody = FrameLayout(this)
         var mapLoaded = false
+        var photoMetadataLoaded = false
+        var photoGpsAvailable = false
+        fun updatePhotoTabColors() {
+            val green = android.content.res.ColorStateList.valueOf(Color.rgb(67, 160, 71))
+            val gray = android.content.res.ColorStateList.valueOf(Color.rgb(170, 170, 170))
+            (tabs.getChildAt(0) as? Button)?.apply {
+                backgroundTintList = if (photoMetadataLoaded) green else gray
+                setTextColor(Color.WHITE)
+            }
+            (tabs.getChildAt(1) as? Button)?.apply {
+                backgroundTintList = if (photoGpsAvailable) green else gray
+                setTextColor(Color.WHITE)
+            }
+        }
         fun showMap(coords: DoubleArray?, diagnostic: String = "") {
             val mapView: View = if (coords == null) {
                 TextView(this).apply {
@@ -1125,6 +1139,7 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams(-1, -1))
             (tabs.getChildAt(0) as Button).text = if (!map) "● Metadata" else "Metadata"
             (tabs.getChildAt(1) as Button).text = if (map) "● Kaart" else "Kaart"
+            updatePhotoTabColors()
             if (map && !mapLoaded) {
                 mapLoaded = true
                 mapHolder.addView(TextView(this).apply {
@@ -1144,6 +1159,8 @@ class MainActivity : ComponentActivity() {
                     val info = if (!permission) "Android-toestemming 'locatiegegevens van media' ontbreekt.\n"
                         else "EXIF, alternatieve metadata en XMP zijn gecontroleerd.\n"
                     runOnUiThread {
+                        photoGpsAvailable = coords != null
+                        updatePhotoTabColors()
                         if (mapHolder.parent != null) showMap(coords, info)
                     }
                 }
@@ -1229,6 +1246,10 @@ class MainActivity : ComponentActivity() {
                 val xmpCoords = if (cached == null && exifCoords == null && altCoords == null) xmpGpsCoordinates(uri) else null
                 val coords = cached ?: exifCoords ?: altCoords ?: xmpCoords
                 runOnUiThread {
+                    if (root.parent != null) {
+                        photoGpsAvailable = coords != null
+                        updatePhotoTabColors()
+                    }
                     if (root.parent != null && coords != null && !photoOnlyState) {
                         mapLoaded = true
                         selectTab(true)
@@ -1261,7 +1282,13 @@ class MainActivity : ComponentActivity() {
             val metadata = try {
                 buildPhotoMetadata(uri, name).ifBlank { "Geen metadata gevonden." }
             } catch (e: Exception) { "Metadata uitlezen mislukt: ${e.message}" }
-            runOnUiThread { if (!isFinishing) metadataLabel.text = metadata }
+            runOnUiThread {
+                if (!isFinishing && root.parent != null) {
+                    metadataLabel.text = metadata
+                    photoMetadataLoaded = true
+                    updatePhotoTabColors()
+                }
+            }
         }
     }
 
