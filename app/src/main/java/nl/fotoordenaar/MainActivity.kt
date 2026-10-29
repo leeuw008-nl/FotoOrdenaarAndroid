@@ -324,58 +324,54 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) { fallback }
     }
 
-    private fun configureOsmMap(webView: WebView) {
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                webView.evaluateJavascript("""
-                    (function() {
-                      var css = document.getElementById('mv-map-style');
-                      if (!css) {
-                        css = document.createElement('style');
-                        css.id = 'mv-map-style';
-                        css.textContent =
-                          '.leaflet-control-attribution { white-space:nowrap !important;' +
-                          'font-size:10px !important; max-width:100vw !important;' +
-                          'overflow:hidden !important; text-overflow:ellipsis !important; }' +
-                          '.mv-zoom-readout { text-align:center; font:12px/24px sans-serif;' +
-                          'height:24px; background:#fff; color:#222; border-top:1px solid #ccc; }';
-                        document.head.appendChild(css);
-                      }
-                      var zoomControl = document.querySelector('.leaflet-control-zoom');
-                      var container = document.querySelector('.leaflet-container');
-                      if (zoomControl && container && !document.getElementById('mv-zoom-level')) {
-                        var label = document.createElement('div');
-                        label.id = 'mv-zoom-level';
-                        label.className = 'mv-zoom-readout';
-                        zoomControl.appendChild(label);
-                        function updateZoom() {
-                          var tile = container.querySelector('.leaflet-tile-loaded');
-                          var src = tile && tile.getAttribute('src');
-                          var match = src && src.match(/\/(\d+)\/\d+\/\d+(?:\.|\?|$)/);
-                          label.textContent = match ? 'Z ' + match[1] : 'Zoom';
-                        }
-                        updateZoom();
-                        var tilePane = container.querySelector('.leaflet-tile-pane');
-                        if (tilePane) {
-                          var observer = new MutationObserver(updateZoom);
-                          observer.observe(tilePane, {subtree:true, childList:true,
-                            attributes:true, attributeFilter:['class','src']});
-                        }
-                        zoomControl.addEventListener('click', function() {
-                          setTimeout(updateZoom, 300);
-                        });
-                      }
-                      var attribution = document.querySelector('.leaflet-control-attribution');
-                      if (attribution) {
-                        attribution.innerHTML =
-                          '© <a href="https://www.openstreetmap.org/copyright" target="_blank">' +
-                          'OpenStreetMap-bijdragers</a>';
-                      }
-                    })();
-                """.trimIndent(), null)
-            }
-        }
+    private fun loadMediaMap(webView: WebView, latitude: Double, longitude: Double) {
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.webViewClient = WebViewClient()
+        val html = """
+            <!doctype html><html><head>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+            <style>
+              html,body,#map { margin:0; width:100%; height:100%; overflow:hidden; }
+              .leaflet-control-attribution {
+                white-space:nowrap!important; max-width:100vw!important;
+                overflow:hidden!important; text-overflow:ellipsis!important;
+                font-size:10px!important; padding:1px 4px!important;
+              }
+              .leaflet-control-zoom { border:2px solid rgba(0,0,0,.2)!important; }
+              #zoom-level { display:block; background:white; color:#222;
+                font:12px/26px sans-serif; text-align:center; width:30px;
+                height:26px; border-top:1px solid #ccc; }
+            </style></head><body><div id="map"></div>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <script>
+              var map = L.map('map', { zoomControl:true, attributionControl:false })
+                .setView([__LAT__,__LON__], 15);
+              L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                { maxZoom:19 }).addTo(map);
+              L.marker([__LAT__,__LON__]).addTo(map);
+              var attribution = L.control({position:'bottomright'});
+              attribution.onAdd = function() {
+                var div = L.DomUtil.create('div','leaflet-control-attribution');
+                div.style.background='rgba(255,255,255,.85)';
+                div.innerHTML='© <a href="https://www.openstreetmap.org/copyright">' +
+                  'OpenStreetMap-bijdragers</a>';
+                return div;
+              };
+              attribution.addTo(map);
+              var zoomControl = document.querySelector('.leaflet-control-zoom');
+              var level = document.createElement('span');
+              level.id='zoom-level';
+              zoomControl.appendChild(level);
+              function refreshZoom(){level.textContent='Z '+map.getZoom();}
+              map.on('zoomend',refreshZoom);
+              refreshZoom();
+            </script></body></html>
+        """.trimIndent()
+            .replace("__LAT__", latitude.toString())
+            .replace("__LON__", longitude.toString())
+        webView.loadDataWithBaseURL("https://unpkg.com/", html, "text/html", "UTF-8", null)
     }
 
     private fun openFullScreen(title: String, body: View, dark: Boolean = false) {
@@ -602,13 +598,9 @@ class MainActivity : ComponentActivity() {
                 } else WebView(this).apply {
                     setBackgroundColor(Color.WHITE)
                     settings.javaScriptEnabled = true
-                    configureOsmMap(this)
                     val lat = position[0]
                     val lon = position[1]
-                    val delta = 0.008
-                    loadUrl("https://www.openstreetmap.org/export/embed.html?bbox=" +
-                        "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
-                        "&layer=mapnik&marker=${lat}%2C${lon}")
+                    loadMediaMap(this, lat, lon)
                 }
                 tabBody.addView(view, FrameLayout.LayoutParams(-1, -1))
             }
@@ -658,7 +650,7 @@ class MainActivity : ComponentActivity() {
         val page = screenStack.lastOrNull() as? LinearLayout
         val toolbar = page?.getChildAt(0) as? LinearLayout
         videoToolbar = toolbar
-        val iconSize = (34 * resources.displayMetrics.density).toInt()
+        val iconSize = (30 * resources.displayMetrics.density).toInt()
         val floatingExit = TextView(this).apply {
             text = "⤡"
             textSize = 26f
@@ -714,6 +706,7 @@ class MainActivity : ComponentActivity() {
             fullscreenButton.text = if (fullscreen) "⤡" else "⛶"
             updateVideoLayout()
         }
+        galleryButton.translationY = -3f * resources.displayMetrics.density
         toolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
         toolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         val controller = MediaController(this)
@@ -1193,13 +1186,9 @@ class MainActivity : ComponentActivity() {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.loadsImagesAutomatically = true
-                configureOsmMap(this)
-                val lat = coords[0]
-                val lon = coords[1]
-                val delta = 0.008
-                loadUrl("https://www.openstreetmap.org/export/embed.html?bbox=" +
-                    "${lon-delta}%2C${lat-delta}%2C${lon+delta}%2C${lat+delta}" +
-                    "&layer=mapnik&marker=${lat}%2C${lon}")
+                    val lat = coords[0]
+                    val lon = coords[1]
+                    loadMediaMap(this, lat, lon)
             }
             mapHolder.removeAllViews()
             mapHolder.addView(mapView, FrameLayout.LayoutParams(-1, -1))
@@ -1270,7 +1259,7 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(Color.argb(155, 0, 0, 0))
             contentDescription = "Beeldvullende media aan of uit"
         }
-        val iconSize = (34 * resources.displayMetrics.density).toInt()
+        val iconSize = (30 * resources.displayMetrics.density).toInt()
         fun applyPhotoMode() {
             tabs.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
             tabBody.visibility = if (photoOnlyState) View.GONE else View.VISIBLE
@@ -1310,6 +1299,7 @@ class MainActivity : ComponentActivity() {
         // Plaats beide knoppen rechts, zonder extra regel onder de foto.
         val photoPage = screenStack.lastOrNull() as? LinearLayout
         val photoToolbar = photoPage?.getChildAt(0) as? LinearLayout
+        galleryButton.translationY = -3f * resources.displayMetrics.density
         photoToolbar?.addView(galleryButton, LinearLayout.LayoutParams(iconSize, iconSize))
         photoToolbar?.addView(fullscreenButton, LinearLayout.LayoutParams(iconSize, iconSize))
         applyPhotoMode()
