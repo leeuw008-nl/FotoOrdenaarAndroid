@@ -410,7 +410,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openMedia(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
         if (isVideoEntry(entry)) openVideo(entry, album, position, fromGallery)
-        else showFullscreenPhoto(entry.uri, entry.name, album, position, fromGallery = fromGallery)
+        else showPhotoOnly(entry.uri, entry.name, album, position, fromGallery = fromGallery)
     }
 
     private fun openVideo(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
@@ -738,6 +738,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showFullscreenPhoto(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
+        if (isVideo(name)) openVideo(ExplorerEntry(uri, name, false, null), album, position, fromGallery)
+        else showPhotoOnly(uri, name, album, position, startPhotoOnly, fromGallery)
+    }
+
+    private fun showPhotoOnly(uri: Uri, name: String, album: List<ExplorerEntry>? = null, position: Int = 0, startPhotoOnly: Boolean = false, fromGallery: Boolean = false) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
@@ -1318,7 +1323,7 @@ class MainActivity : ComponentActivity() {
                     thumb.setImageBitmap(cachedThumb)
                 } else {
                     galleryThumbWorker.execute {
-                        val bitmap = try { galleryThumbnail(photo.uri) } catch (_: Exception) { null }
+                        val bitmap = try { if (isVideo(photo.name)) videoFrame(photo.uri) else galleryThumbnail(photo.uri) } catch (_: Exception) { null }
                         if (bitmap != null) synchronized(thumbnailCache) {
                             thumbnailCache.put(thumbKey, bitmap)
                         }
