@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fix/gps-xmp-diagnostics
+      - restore/laatst-werkende-backup-2026-10-29
 
 permissions:
   contents: read
