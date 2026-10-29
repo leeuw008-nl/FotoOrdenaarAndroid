@@ -742,18 +742,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun nativeMediaInfo(uri: Uri): String {
-        return try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-                val length = descriptor.statSize
-                val report = net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
-                    descriptor.fd, displayName(uri), "Text")
-                "MediaInfo bron: bestandsdescriptor; grootte: $length bytes\n" +
-                    "Rapportlengte: ${report?.length ?: 0} tekens\n" +
-                    (report?.takeIf { it.isNotBlank() } ?: "[MediaInfoLib gaf geen tekst terug]")
-            } ?: "MediaInfo: bestandsdescriptor kon niet worden geopend."
-        } catch (e: Throwable) {
-            "MediaInfo-fout: ${e.javaClass.simpleName}: ${e.message}"
-        }
+        // Native MediaInfoLib is tijdelijk uitgeschakeld: de JNI-aanroep kan het
+        // Android-proces beëindigen voordat Kotlin de fout kan opvangen.
+        // Diagnoseer eerst MP4-tags en Android-metadata zonder native risico.
+        return "MediaInfoLib tijdelijk uitgeschakeld wegens reproduceerbare native crash. " +
+            "MP4-container en Android-uitlezing staan hieronder."
     }
 
     private fun nativeMediaInfoGps(uri: Uri): DoubleArray? {
