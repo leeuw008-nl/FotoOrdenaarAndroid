@@ -12,6 +12,7 @@ on:
       - test/mediaverkenner-echte-mediainfo-2026-10-29
       - fix/mediaverkenner-videometadata-crash-2026-10-29
       - fix/mediaverkenner-gps-regex-2026-10-29
+      - fix/mediaverkenner-gps-decimale-graden-2026-10-29
 
 permissions:
   contents: read
