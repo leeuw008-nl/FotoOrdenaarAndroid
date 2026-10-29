@@ -710,12 +710,29 @@ class MainActivity : ComponentActivity() {
     // ISO 6709: +52.12345+006.12345/ (soms met hoogte of ISO-prefix).
     private fun parseVideoGps(raw: String?): DoubleArray? {
         if (raw.isNullOrBlank()) return null
-        val match = Regex("""([+-]\d{1,2}(?:\.\d+)?)([+-]\d{1,3}(?:\.\d+)?)""")
-            .find(raw) ?: return null
-        val lat = match.groupValues[1].toDoubleOrNull() ?: return null
-        val lon = match.groupValues[2].toDoubleOrNull() ?: return null
-        return if (lat in -90.0..90.0 && lon in -180.0..180.0 &&
-            (lat != 0.0 || lon != 0.0)) doubleArrayOf(lat, lon) else null
+        // MediaInfo: "52.5219°N 6.4245°E" (ook Z/W, komma als decimaalteken).
+        val decimal = Regex("""(\d{1,2}(?:[.,]\d+)?)\s*°?\s*([NS])\s*[,;/ ]+\s*(\d{1,3}(?:[.,]\d+)?)\s*°?\s*([EW])""",
+            RegexOption.IGNORE_CASE).find(raw)
+        if (decimal != null) {
+            val lat = decimal.groupValues[1].replace(',', '.').toDoubleOrNull()
+            val lon = decimal.groupValues[3].replace(',', '.').toDoubleOrNull()
+            if (lat != null && lon != null) {
+                val signedLat = if (decimal.groupValues[2].equals("S", true)) -lat else lat
+                val signedLon = if (decimal.groupValues[4].equals("W", true)) -lon else lon
+                if (signedLat in -90.0..90.0 && signedLon in -180.0..180.0 &&
+                    (signedLat != 0.0 || signedLon != 0.0)) return doubleArrayOf(signedLat, signedLon)
+            }
+        }
+        // ISO 6709 in MP4/QuickTime: "+52.5219+006.4245/".
+        val iso = Regex("""([+-]\d{1,2}(?:\.\d+)?)([+-]\d{1,3}(?:\.\d+)?)""").find(raw)
+        if (iso != null) {
+            val lat = iso.groupValues[1].toDoubleOrNull()
+            val lon = iso.groupValues[2].toDoubleOrNull()
+            if (lat != null && lon != null && lat in -90.0..90.0 &&
+                lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0))
+                return doubleArrayOf(lat, lon)
+        }
+        return null
     }
 
     private fun nativeMediaInfo(uri: Uri): String {
