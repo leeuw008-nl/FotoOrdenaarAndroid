@@ -653,9 +653,9 @@ class MainActivity : ComponentActivity() {
                 SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(it)
             } ?: "niet gevonden"
             val containerTags = videoContainerTags(entry.uri)
-            val extraDetails = containerTags.joinToString("\\n") { (name, value) -> "$name: $value" }
+            val extraDetails = containerTags.joinToString("\n") { (name, value) -> "$name: $value" }
             val mediaInfoReport = nativeMediaInfo(entry.uri)
-            val details = videoTechnicalInfo(entry.uri) + "\n\nMediaInfoLib:\n" + mediaInfoReport + if (extraDetails.isNotEmpty()) "\\n\\nMP4 / QuickTime metadata:\\n$extraDetails" else ""
+            val details = videoTechnicalInfo(entry.uri) + "\n\nMediaInfoLib:\n" + mediaInfoReport + if (extraDetails.isNotEmpty()) "\n\nMP4 / QuickTime metadata:\n$extraDetails" else ""
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
             } ?: "niet gevonden"
@@ -763,7 +763,7 @@ class MainActivity : ComponentActivity() {
         // locatievelden die Android MediaMetadataRetriever vaak niet teruggeeft.
         return try {
             contentResolver.openInputStream(uri)?.buffered()?.use { stream ->
-                val metadata = com.drew.imaging.ImageMetadataReader.readMetadata(stream)
+                val metadata = com.drew.imaging.mp4.Mp4MetadataReader.readMetadata(stream)
                 metadata.directories.flatMap { directory ->
                     directory.tags.mapNotNull { tag ->
                         val value = tag.description?.trim()
