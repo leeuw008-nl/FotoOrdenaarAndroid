@@ -1746,27 +1746,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun readExif(uri: Uri): ExifInterface? {
-        // Lees eerst direct uit de gekozen document-URI; vermijd een trage
-        // MediaStore-zoekactie zolang die niet nodig is.
-        var fallback: ExifInterface? = null
-        try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                val exif = ExifInterface(pfd.fileDescriptor)
-                if (gpsCoordinates(exif) != null) return exif
-                fallback = exif
-            }
-        } catch (_: Exception) {}
+        // Eerst de expliciet geselecteerde SAF-foto proberen; originele
+        // MediaStore-toegang kan zonder extra permissie SecurityException geven.
+        // Originele MediaStore-stream eerst: SAF kan GPS-tags door Android maskeren.
         val original = originalMediaUri(uri)
-        if (original != uri) {
+        val candidates = listOf(original, uri).distinct()
+        for (candidate in candidates) {
             try {
-                contentResolver.openFileDescriptor(original, "r")?.use { pfd ->
-                    val exif = ExifInterface(pfd.fileDescriptor)
-                    if (gpsCoordinates(exif) != null) return exif
-                    if (fallback == null) fallback = exif
+                contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
+                    return ExifInterface(pfd.fileDescriptor)
                 }
             } catch (_: Exception) {}
+            try {
+                contentResolver.openInputStream(candidate)?.use { return ExifInterface(it) }
+            } catch (_: Exception) {}
         }
-        return fallback
+        return null
     }
 
     // Independent fallback parser: Drew Noakes metadata-extractor.
