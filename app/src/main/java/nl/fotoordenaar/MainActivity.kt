@@ -192,7 +192,7 @@ class MainActivity : ComponentActivity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "FotoOrdenaar"
+            text = "MediaOrdenaar"
             textSize = 23f
         })
 
@@ -233,8 +233,12 @@ class MainActivity : ComponentActivity() {
         root.addView(moveButton)
 
         root.addView(Button(this).apply {
-            text = "FotoVerkenner openen"
-            setOnClickListener { showExplorer(organizedOnly = false) }
+            text = "MediaVerkenner openen"
+            setOnClickListener {
+                val intent = Intent(this@MainActivity, MediaViewerActivity::class.java)
+                sourceTree?.let { intent.putExtra("sourceTree", it.toString()) }
+                startActivity(intent)
+            }
         })
 
         homeView = root
