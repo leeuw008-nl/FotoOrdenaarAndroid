@@ -481,6 +481,39 @@ class MainActivity : ComponentActivity() {
             }
         }
         videoFrame.addView(floatingExit, FrameLayout.LayoutParams(iconSize, iconSize, Gravity.TOP or Gravity.END))
+        if (album != null && album.size > 1) {
+            val navOverlay = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+                setBackgroundColor(Color.argb(120, 0, 0, 0))
+            }
+            val prev = Button(this).apply {
+                text = "◀"
+                isEnabled = position > 0
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position - 1], album, position - 1, fromGallery)
+                }
+            }
+            val next = Button(this).apply {
+                text = "▶"
+                isEnabled = position < album.lastIndex
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position + 1], album, position + 1, fromGallery)
+                }
+            }
+            navOverlay.addView(prev)
+            navOverlay.addView(TextView(this).apply {
+                text = "${position + 1} / ${album.size}"
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navOverlay.addView(next)
+            videoFrame.addView(navOverlay, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            videoFrame.setOnClickListener { navOverlay.visibility = if (navOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        }
         fullscreenButton.setOnClickListener {
             fullscreen = !fullscreen
             floatingExit.visibility = if (fullscreen) View.VISIBLE else View.GONE
@@ -1492,7 +1525,11 @@ class MainActivity : ComponentActivity() {
                         "🖼  ${entry.name}  —  $sizeText  —  afmetingen laden…  ›"
                     else "📄  ${entry.name}  —  $sizeText"
                     if (isVideoEntry(entry)) {
-                        label.setOnClickListener { openVideo(entry) }
+                        label.setOnClickListener {
+                            val media = cache[parent.toString()].orEmpty().filter { isImageEntry(it) || isVideoEntry(it) }
+                            val index = media.indexOfFirst { it.uri == entry.uri }
+                            openMedia(entry, if (index >= 0) media else null, index.coerceAtLeast(0))
+                        }
                     } else if (isImageEntry(entry)) {
                         dimensionWorker.execute {
                             val dimensions = imageDimensions(entry.uri) ?: "afmetingen onbekend"
