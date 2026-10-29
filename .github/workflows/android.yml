@@ -24,6 +24,7 @@ on:
       - fix/mediaverkenner-groene-tabs-2026-10-29
       - fix/mediaverkenner-groene-fototabs-2026-10-29
       - fix/mediaverkenner-volledig-pad-header-2026-10-29
+      - fix/mediaverkenner-kaartzoom-header-2026-10-29
 
 permissions:
   contents: read
