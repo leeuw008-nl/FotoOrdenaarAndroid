@@ -31,4 +31,5 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.drewnoakes:metadata-extractor:2.19.0")
+    implementation("io.github.marlboro-advance:mediainfo-android:1.0.1")
 }
