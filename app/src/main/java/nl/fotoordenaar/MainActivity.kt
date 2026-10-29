@@ -318,6 +318,8 @@ class MainActivity : ComponentActivity() {
         player.setOnPreparedListener { media ->
             val width = media.videoWidth
             val height = media.videoHeight
+            videoPixelWidth = width
+            videoPixelHeight = height
             if (width > 0 && height > 0) {
                 videoFrame.post {
                     val frameWidth = videoFrame.width
@@ -425,6 +427,8 @@ class MainActivity : ComponentActivity() {
             contentDescription = "Terug naar Gallery"
             setOnClickListener { closeFullScreen() }
         }
+        var videoPixelWidth = 0
+        var videoPixelHeight = 0
         var fullscreen = false
         var videoToolbar: LinearLayout? = null
         fun updateVideoLayout() {
@@ -436,8 +440,8 @@ class MainActivity : ComponentActivity() {
                 (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
                 else 0
             videoFrame.post {
-                val w = player.videoWidth
-                val h = player.videoHeight
+                val w = videoPixelWidth
+                val h = videoPixelHeight
                 if (w > 0 && h > 0 && videoFrame.width > 0 && videoFrame.height > 0) {
                     val scale = minOf(videoFrame.width.toFloat() / w, videoFrame.height.toFloat() / h)
                     player.layoutParams = FrameLayout.LayoutParams(
