@@ -721,13 +721,11 @@ class MainActivity : ComponentActivity() {
     private fun nativeMediaInfo(uri: Uri): String {
         return try {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                // De native MediaInfo-reader kan de descriptor zelf sluiten.
+                // Sluit dezelfde fd daarom niet nogmaals via adoptFd().
                 val fd = android.os.ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd()
-                try {
-                    net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
-                        fd, "video.mp4", "Text") ?: ""
-                } finally {
-                    android.os.ParcelFileDescriptor.adoptFd(fd).close()
-                }
+                net.mediaarea.mediainfo.lib.MediaInfoUtil.getMediaInfo(
+                    fd, displayName(uri), "Text") ?: ""
             } ?: ""
         } catch (e: Exception) { "MediaInfo-fout: ${e.message}" }
     }
