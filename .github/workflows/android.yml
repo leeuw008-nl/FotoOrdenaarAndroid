@@ -10,6 +10,7 @@ on:
       - test/mediaverkenner-video-gps-metadata-2026-10-29
       - test/mediaverkenner-quicktime-metadata-2026-10-29
       - test/mediaverkenner-echte-mediainfo-2026-10-29
+      - fix/mediaverkenner-videometadata-crash-2026-10-29
 
 permissions:
   contents: read
