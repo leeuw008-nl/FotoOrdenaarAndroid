@@ -2179,7 +2179,7 @@ class MainActivity : ComponentActivity() {
                 field("Titel", MediaMetadataRetriever.METADATA_KEY_TITLE)
                 field("Encoder", MediaMetadataRetriever.METADATA_KEY_WRITER)
                 field("Opnamelocatie (ruw)", MediaMetadataRetriever.METADATA_KEY_LOCATION)
-                if (lines.isEmpty()) "Geen aanvullende technische metadata gevonden." else lines.joinToString("\\n")
+                if (lines.isEmpty()) "Geen aanvullende technische metadata gevonden." else lines.joinToString("\n")
             } ?: "Bestand niet leesbaar."
         } catch (e: Exception) { "Technische metadata niet beschikbaar: ${e.message}" }
         finally { try { r.release() } catch (_: Exception) {} }
