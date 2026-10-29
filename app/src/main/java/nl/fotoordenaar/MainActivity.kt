@@ -831,7 +831,7 @@ class MainActivity : ComponentActivity() {
                 })
                 photoWorker.execute {
                     val cached = cachedGpsCoordinates(name)
-                    val exifCoords = try { gpsCoordinates(readExif(uri)) } catch (_: Exception) { null }
+                    val exifCoords = if (cached == null) try { gpsCoordinates(readExif(uri)) } catch (_: Exception) { null } else null
                     val altCoords = if (cached == null && exifCoords == null)
                         alternateGpsCoordinates(uri) else null
                     val xmpCoords = if (cached == null && exifCoords == null && altCoords == null)
