@@ -663,7 +663,7 @@ class MainActivity : ComponentActivity() {
                 "\n\n=== 2. MP4-containergegevens ===\n" +
                 (if (extraDetails.isNotEmpty()) extraDetails else "[Geen tags gevonden]") +
                 "\n\n=== 3. Android-metadata en diagnose ===\n" +
-                videoTechnicalInfo(entry.uri) +
+                videoTechnicalInfo(entry.uri) +\n                "\\n\\n=== 4. Audio ===\\n" + videoAudioTracks(entry.uri) +\n                "\\n\\n=== 5. GPS / ruwe MP4-controle ===\\n" + videoRawLocationDiagnostics(entry.uri) +
                 "\nMP4-tag-aantal: ${containerTags.size}\nGPS uit uitleesmethoden: " +
                 (if (gps != null) "gevonden" else "niet gevonden")
             val gpsText = gps?.let {
@@ -678,6 +678,75 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun videoAudioTracks(uri: Uri): String {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                extractor.setDataSource(fd.fileDescriptor)
+                val output = mutableListOf<String>()
+                for (index in 0 until extractor.trackCount) {
+                    val format = extractor.getTrackFormat(index)
+                    val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                    if (!mime.startsWith("audio/")) continue
+                    val lines = mutableListOf("Audiotrack ${index + 1}", "Codec (MIME): $mime")
+                    fun number(label: String, key: String, suffix: String = "") {
+                        if (format.containsKey(key)) {
+                            try { lines.add("$label: ${format.getInteger(key)}$suffix") }
+                            catch (_: Exception) {}
+                        }
+                    }
+                    number("Kanalen", android.media.MediaFormat.KEY_CHANNEL_COUNT)
+                    number("Samplefrequentie", android.media.MediaFormat.KEY_SAMPLE_RATE, " Hz")
+                    number("Bitrate", android.media.MediaFormat.KEY_BIT_RATE, " bit/s")
+                    number("AAC-profiel", android.media.MediaFormat.KEY_AAC_PROFILE)
+                    number("PCM-encoding", android.media.MediaFormat.KEY_PCM_ENCODING)
+                    output.add(lines.joinToString("\n"))
+                }
+                if (output.isEmpty()) "Geen audiotrack gevonden." else output.joinToString("\n\n")
+            } ?: "Audiobestand niet toegankelijk."
+        } catch (e: Exception) {
+            "Audio-uitlezing mislukt: ${e.javaClass.simpleName}: ${e.message}"
+        } finally { try { extractor.release() } catch (_: Exception) {} }
+    }
+
+    private fun videoRawLocationDiagnostics(uri: Uri): String {
+        // Lees een beperkte hoeveelheid ruwe MP4-bytes om ongeparseerde locatievelden
+        // te detecteren. Geen wijziging aan het oorspronkelijke bestand.
+        return try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val maxBytes = 8 * 1024 * 1024
+                val buffer = ByteArray(32768)
+                val bytes = java.io.ByteArrayOutputStream()
+                while (bytes.size() < maxBytes) {
+                    val n = stream.read(buffer, 0, minOf(buffer.size, maxBytes - bytes.size()))
+                    if (n <= 0) break
+                    bytes.write(buffer, 0, n)
+                }
+                val raw = bytes.toByteArray()
+                val latin = String(raw, Charsets.ISO_8859_1)
+                val markers = listOf("©xyz", "com.apple.quicktime.location.ISO6709",
+                    "location.ISO6709", "GPSCoordinates", "GPSLatitude", "GPSLongitude")
+                val findings = mutableListOf<String>()
+                for (marker in markers) {
+                    var pos = latin.indexOf(marker, ignoreCase = true)
+                    var matches = 0
+                    while (pos >= 0 && matches < 3) {
+                        val start = (pos - 12).coerceAtLeast(0)
+                        val end = (pos + marker.length + 110).coerceAtMost(latin.length)
+                        val excerpt = latin.substring(start, end)
+                            .replace(Regex("[^\\x20-\\x7E]"), "·")
+                        findings.add("$marker op byte $pos: $excerpt")
+                        matches++
+                        pos = latin.indexOf(marker, pos + marker.length, ignoreCase = true)
+                    }
+                }
+                "Ruwe MP4 onderzocht: ${raw.size} bytes (maximaal 8 MiB)\n" +
+                    if (findings.isEmpty()) "Geen bekende GPS-markers in dit gedeelte."
+                    else findings.joinToString("\n")
+            } ?: "MP4 niet te openen."
+        } catch (e: Exception) { "MP4-scan mislukt: ${e.javaClass.simpleName}: ${e.message}" }
     }
 
     private fun videoTechnicalInfo(uri: Uri): String {
