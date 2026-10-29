@@ -6,6 +6,7 @@ on:
     branches:
       - fix/gps-xmp-diagnostics
       - integratie/MediaOrdenaar-ordenaar-intact-verkenner-apart-2026-10-29
+      - aanpassing/MediaOrdenaar-home-en-media-2026-10-29
 
 permissions:
   contents: read
