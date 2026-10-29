@@ -316,24 +316,30 @@ class MainActivity : ComponentActivity() {
         var videoPixelHeight = 0
         val videoFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        fun fitVideoToFrame() {
+            val w = videoPixelWidth
+            val h = videoPixelHeight
+            val fw = videoFrame.width
+            val fh = videoFrame.height
+            if (w > 0 && h > 0 && fw > 0 && fh > 0) {
+                val scale = minOf(fw.toFloat() / w, fh.toFloat() / h)
+                val newWidth = (w * scale).toInt().coerceAtLeast(1)
+                val newHeight = (h * scale).toInt().coerceAtLeast(1)
+                if (player.layoutParams.width != newWidth || player.layoutParams.height != newHeight)
+                    player.layoutParams = FrameLayout.LayoutParams(newWidth, newHeight, Gravity.CENTER)
+            }
+        }
+        videoFrame.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)
+                fitVideoToFrame()
+        }
         // Centreer staande video's en behoud de oorspronkelijke beeldverhouding.
         player.setOnPreparedListener { media ->
             val width = media.videoWidth
             val height = media.videoHeight
             videoPixelWidth = width
             videoPixelHeight = height
-            if (width > 0 && height > 0) {
-                videoFrame.post {
-                    val frameWidth = videoFrame.width
-                    val frameHeight = videoFrame.height
-                    if (frameWidth > 0 && frameHeight > 0) {
-                        val scale = minOf(frameWidth.toFloat() / width, frameHeight.toFloat() / height)
-                        player.layoutParams = FrameLayout.LayoutParams(
-                            (width * scale).toInt().coerceAtLeast(1),
-                            (height * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
-                    }
-                }
-            }
+            videoFrame.post { fitVideoToFrame() }
             player.start()
         }
         root.addView(videoFrame, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -439,16 +445,7 @@ class MainActivity : ComponentActivity() {
             window.decorView.systemUiVisibility = if (fullscreen)
                 (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
                 else 0
-            videoFrame.post {
-                val w = videoPixelWidth
-                val h = videoPixelHeight
-                if (w > 0 && h > 0 && videoFrame.width > 0 && videoFrame.height > 0) {
-                    val scale = minOf(videoFrame.width.toFloat() / w, videoFrame.height.toFloat() / h)
-                    player.layoutParams = FrameLayout.LayoutParams(
-                        (w * scale).toInt().coerceAtLeast(1),
-                        (h * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
-                }
-            }
+            videoFrame.post { fitVideoToFrame() }
         }
         val fullscreenButton = TextView(this).apply {
             text = "⛶"
