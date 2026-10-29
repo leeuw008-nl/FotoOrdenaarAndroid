@@ -27,6 +27,7 @@ on:
       - fix/mediaverkenner-kaartzoom-header-2026-10-29
       - fix/mediaverkenner-kaartbediening-header-v2-2026-10-29
       - fix/mediaverkenner-kaart-leaflet-header-v3-2026-10-29
+      - app/MediaOrdenaar-2026-10-29
 
 permissions:
   contents: read
@@ -61,7 +62,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FotoOrdenaar-APK
+          name: MediaOrdenaar-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
