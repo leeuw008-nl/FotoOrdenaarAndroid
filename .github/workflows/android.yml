@@ -14,6 +14,7 @@ on:
       - fix/mediaverkenner-gps-regex-2026-10-29
       - fix/mediaverkenner-gps-decimale-graden-2026-10-29
       - fix/mediaverkenner-mp4-reader-2026-10-29
+      - test/mediaverkenner-diagnose-metadata-2026-10-29
 
 permissions:
   contents: read
