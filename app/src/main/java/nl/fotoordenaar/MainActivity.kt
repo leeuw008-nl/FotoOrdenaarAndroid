@@ -350,13 +350,18 @@ class MainActivity : ComponentActivity() {
                         label.className = 'mv-zoom-readout';
                         zoomControl.appendChild(label);
                         function updateZoom() {
-                          var match = (container.className || '').match(/leaflet-zoom-(\d+)/);
-                          if (match) label.textContent = 'Z ' + match[1];
-                          else label.textContent = 'Zoom';
+                          var tile = container.querySelector('.leaflet-tile-loaded');
+                          var src = tile && tile.getAttribute('src');
+                          var match = src && src.match(/\/(\d+)\/\d+\/\d+(?:\.|\?|$)/);
+                          label.textContent = match ? 'Z ' + match[1] : 'Zoom';
                         }
                         updateZoom();
-                        var observer = new MutationObserver(updateZoom);
-                        observer.observe(container, {attributes:true, attributeFilter:['class']});
+                        var tilePane = container.querySelector('.leaflet-tile-pane');
+                        if (tilePane) {
+                          var observer = new MutationObserver(updateZoom);
+                          observer.observe(tilePane, {subtree:true, childList:true,
+                            attributes:true, attributeFilter:['class','src']});
+                        }
                         zoomControl.addEventListener('click', function() {
                           setTimeout(updateZoom, 300);
                         });
