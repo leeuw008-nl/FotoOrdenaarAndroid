@@ -1745,17 +1745,24 @@ class MainActivity : ComponentActivity() {
         // Originele MediaStore-stream eerst: SAF kan GPS-tags door Android maskeren.
         val original = originalMediaUri(uri)
         val candidates = listOf(original, uri).distinct()
+        var fallback: ExifInterface? = null
         for (candidate in candidates) {
             try {
-                contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
-                    return ExifInterface(pfd.fileDescriptor)
+                contentResolver.openInputStream(candidate)?.use { input ->
+                    val exif = ExifInterface(input)
+                    if (gpsCoordinates(exif) != null) return exif
+                    if (fallback == null) fallback = exif
                 }
             } catch (_: Exception) {}
             try {
-                contentResolver.openInputStream(candidate)?.use { return ExifInterface(it) }
+                contentResolver.openFileDescriptor(candidate, "r")?.use { pfd ->
+                    val exif = ExifInterface(pfd.fileDescriptor)
+                    if (gpsCoordinates(exif) != null) return exif
+                    if (fallback == null) fallback = exif
+                }
             } catch (_: Exception) {}
         }
-        return null
+        return fallback
     }
 
     // Independent fallback parser: Drew Noakes metadata-extractor.
