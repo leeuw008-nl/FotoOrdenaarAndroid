@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
                 if (Build.VERSION.SDK_INT >= 29 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) requestMediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
                 else if (sourceTree != null) previewFiles()
             } else {
-                status.text = "Fototoegang ontbreekt. GPS-locaties zijn mogelijk niet leesbaar."
+                status.text = "Mediatoegang ontbreekt. GPS-locaties zijn mogelijk niet leesbaar."
             }
         }
 
@@ -412,7 +412,7 @@ class MainActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
             setImageDrawable(null)
-            contentDescription = "Foto laden…"
+            contentDescription = "Media laden…"
         }
         // Zoom uitsluitend als visuele transformatie op de ImageView:
         // de bestaande FIT_CENTER, metadata, GPS en kaart blijven ongemoeid.
@@ -541,7 +541,7 @@ class MainActivity : ComponentActivity() {
             val mapView: View = if (coords == null) {
                 TextView(this).apply {
                     text = "Geen leesbare GPS-coördinaten gevonden.\n" + diagnostic +
-                        "\nControleer of de app toegang tot originele fotolocaties heeft."
+                        "\nControleer of de app toegang tot originele medialocaties heeft."
                     textSize = 15f
                     setTextColor(Color.BLACK)
                     setBackgroundColor(Color.WHITE)
@@ -620,7 +620,7 @@ class MainActivity : ComponentActivity() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setBackgroundColor(Color.argb(155, 0, 0, 0))
-            contentDescription = "Beeldvullende foto aan of uit"
+            contentDescription = "Beeldvullende media aan of uit"
         }
         val iconSize = (46 * resources.displayMetrics.density).toInt()
         fun applyPhotoMode() {
@@ -697,7 +697,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    image.contentDescription = if (bitmap == null) "Foto kon niet worden geladen" else name
+                    image.contentDescription = if (bitmap == null) "Media kon niet worden geladen" else name
                 }
             }
         }
@@ -760,7 +760,7 @@ class MainActivity : ComponentActivity() {
                     ExifInterface.TAG_GPS_LONGITUDE to "GPS-lengtegraad"
                 )
                 var fallbackFound = false
-                out.append("\nBelangrijke fotogegevens\n")
+                out.append("\nBelangrijke mediagegevens\n")
                 for ((tag, label) in tags) {
                     val value = exif.getAttribute(tag)
                     if (!value.isNullOrBlank()) {
