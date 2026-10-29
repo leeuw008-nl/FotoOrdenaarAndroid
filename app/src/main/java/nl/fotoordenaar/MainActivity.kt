@@ -694,7 +694,6 @@ class MainActivity : ComponentActivity() {
                 field("Titel", MediaMetadataRetriever.METADATA_KEY_TITLE)
                 field("Artiest", MediaMetadataRetriever.METADATA_KEY_ARTIST)
                 field("Genre", MediaMetadataRetriever.METADATA_KEY_GENRE)
-                field("Copyright", MediaMetadataRetriever.METADATA_KEY_COPYRIGHT)
                 field("Componist", MediaMetadataRetriever.METADATA_KEY_COMPOSER)
                 field("Schijfnummer", MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
                 field("Encoder", MediaMetadataRetriever.METADATA_KEY_WRITER)
