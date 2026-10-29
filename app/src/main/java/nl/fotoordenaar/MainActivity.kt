@@ -301,15 +301,63 @@ class MainActivity : ComponentActivity() {
         finally { try { retriever.release() } catch (_: Exception) {} }
     }
 
-    private fun openVideo(entry: ExplorerEntry, fromGallery: Boolean = false) {
+    private fun openMedia(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
+        if (isVideoEntry(entry)) openVideo(entry, album, position, fromGallery)
+        else showFullscreenPhoto(entry.uri, entry.name, album, position, fromGallery = fromGallery)
+    }
+
+    private fun openVideo(entry: ExplorerEntry, album: List<ExplorerEntry>? = null, position: Int = 0, fromGallery: Boolean = false) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
         }
         val player = VideoView(this)
         val videoFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1))
+        videoFrame.addView(player, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        // Centreer staande video's en behoud de oorspronkelijke beeldverhouding.
+        player.setOnPreparedListener { media ->
+            val width = media.videoWidth
+            val height = media.videoHeight
+            if (width > 0 && height > 0) {
+                videoFrame.post {
+                    val frameWidth = videoFrame.width
+                    val frameHeight = videoFrame.height
+                    if (frameWidth > 0 && frameHeight > 0) {
+                        val scale = minOf(frameWidth.toFloat() / width, frameHeight.toFloat() / height)
+                        player.layoutParams = FrameLayout.LayoutParams(
+                            (width * scale).toInt().coerceAtLeast(1),
+                            (height * scale).toInt().coerceAtLeast(1), Gravity.CENTER)
+                    }
+                }
+            }
+            player.start()
+        }
         root.addView(videoFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (album != null && album.size > 1) {
+            val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            navigation.addView(Button(this).apply {
+                text = "◀ Vorige"
+                isEnabled = position > 0
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position - 1], album, position - 1, fromGallery)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(TextView(this).apply {
+                text = "${position + 1} / ${album.size}"
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            navigation.addView(Button(this).apply {
+                text = "Volgende ▶"
+                isEnabled = position < album.lastIndex
+                setOnClickListener {
+                    closeFullScreen()
+                    openMedia(album[position + 1], album, position + 1, fromGallery)
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            root.addView(navigation)
+        }
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val metadataButton = Button(this).apply { text = "● Metadata" }
         val mapButton = Button(this).apply { text = "Kaart" }
@@ -340,11 +388,17 @@ class MainActivity : ComponentActivity() {
                 val position = coords
                 val view: View = if (!metadataLoaded) TextView(this).apply {
                     text = "GPS-locatie lezen…"
-                    setPadding(18, 18, 18, 18)
+                    setTextColor(Color.BLACK)
+                    setBackgroundColor(Color.WHITE)
+                    setPadding(20, 20, 20, 20)
                 } else if (position == null) TextView(this).apply {
-                    text = "Geen GPS-coördinaten in deze video gevonden."
-                    setPadding(18, 18, 18, 18)
+                    text = "Geen leesbare GPS-coördinaten gevonden.\nControleer of de app toegang tot originele videolocaties heeft."
+                    setTextColor(Color.BLACK)
+                    setBackgroundColor(Color.WHITE)
+                    textSize = 15f
+                    setPadding(20, 20, 20, 20)
                 } else WebView(this).apply {
+                    setBackgroundColor(Color.WHITE)
                     settings.javaScriptEnabled = true
                     webViewClient = WebViewClient()
                     val lat = position[0]
@@ -395,7 +449,7 @@ class MainActivity : ComponentActivity() {
         val controller = MediaController(this)
         controller.setAnchorView(player)
         player.setMediaController(controller)
-        player.setOnPreparedListener { player.start() }
+        // Afmetingen en afspelen worden hierboven bij OnPrepared ingesteld.
         player.setOnErrorListener { _, _, _ ->
             metadata.text = "Video kan niet worden afgespeeld: ${entry.name}"
             true
@@ -586,8 +640,7 @@ class MainActivity : ComponentActivity() {
                         val next = (position + if (delta < 0f) 1 else -1).coerceIn(0, album.lastIndex)
                         if (kotlin.math.abs(delta) > 75 * resources.displayMetrics.density && next != position) {
                             closeFullScreen()
-                            showFullscreenPhoto(album[next].uri, album[next].name, album, next,
-                                startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
+                            openMedia(album[next], album, next, fromGallery)
                         }
                     }
                 }
@@ -604,7 +657,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position > 0
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position - 1].uri, album[position - 1].name, album, position - 1, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
+                    openMedia(album[position - 1], album, position - 1, fromGallery)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             navigation.addView(TextView(this).apply {
@@ -617,7 +670,7 @@ class MainActivity : ComponentActivity() {
                 isEnabled = position < album.lastIndex
                 setOnClickListener {
                     closeFullScreen()
-                    showFullscreenPhoto(album[position + 1].uri, album[position + 1].name, album, position + 1, startPhotoOnly = photoOnlyState, fromGallery = fromGallery)
+                    openMedia(album[position + 1], album, position + 1, fromGallery)
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
             root.addView(navigation)
@@ -1005,8 +1058,7 @@ class MainActivity : ComponentActivity() {
                             if (url?.startsWith("fotoalbum://open/") == true) {
                                 val index = url.substringAfterLast('/').toIntOrNull()
                                 if (index != null && index in photos.indices) {
-                                    showFullscreenPhoto(photos[index].uri, photos[index].name,
-                                        photos, index, fromGallery = true)
+                                    openMedia(photos[index], photos, index, fromGallery = true)
                                 }
                                 return true
                             }
@@ -1074,8 +1126,7 @@ class MainActivity : ComponentActivity() {
                     )
                     contentDescription = photo.name
                     setOnClickListener {
-                        if (isVideoEntry(photo)) openVideo(photo)
-                        else showFullscreenPhoto(photo.uri, photo.name, photos.filter { isImageEntry(it) }, photos.filter { isImageEntry(it) }.indexOf(photo).coerceAtLeast(0), fromGallery = true)
+                        openMedia(photo, photos, photos.indexOf(photo), fromGallery = true)
                     }
                 }
                 tile.addView(thumb)
