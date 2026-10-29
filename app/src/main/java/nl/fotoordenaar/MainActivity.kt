@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
                 previewButton.backgroundTintList = null
                 previewButton.text = "2. Voorbeeld bekijken"
                 moveButton.backgroundTintList = null
-                moveButton.text = "3. Foto's verplaatsen"
+                moveButton.text = "3. Media verplaatsen"
                 status.text = "Bronmap gekozen.\n\nKies eerst ‘Voorbeeld bekijken’."
             }
         }
@@ -198,7 +198,7 @@ class MainActivity : ComponentActivity() {
 
         status = TextView(this).apply {
             textSize = 14f
-            text = "Kies de map met foto's. Begin altijd met ‘Voorbeeld bekijken’."
+            text = "Kies de map met media. Begin altijd met ‘Voorbeeld bekijken’."
             setPadding(0, 24, 0, 24)
             // Sta toe dat de gebruiker tekst uit de preview kan selecteren en kopiëren.
             setTextIsSelectable(true)
@@ -227,7 +227,7 @@ class MainActivity : ComponentActivity() {
         root.addView(previewButton)
 
         moveButton = Button(this).apply {
-            text = "3. Foto's verplaatsen"
+            text = "3. Media verplaatsen"
             setOnClickListener { confirmAndRun() }
         }
         root.addView(moveButton)
@@ -935,7 +935,7 @@ class MainActivity : ComponentActivity() {
         ))
         if (photos.isEmpty()) {
             grid.addView(TextView(this).apply {
-                text = "Geen foto's in deze map of onderliggende mappen gevonden."
+                text = "Geen media in deze map of onderliggende mappen gevonden."
                 textSize = 14f
                 setPadding(12, 12, 12, 12)
             })
@@ -1073,12 +1073,12 @@ class MainActivity : ComponentActivity() {
 
     private fun showExplorer(organizedOnly: Boolean) {
         val tree = sourceTree ?: run {
-            status.text = "Kies eerst een fotomap."
+            status.text = "Kies eerst een mediamap."
             return
         }
         val rootUri = rootDocumentUri(tree)
         val currentFolder = TextView(this).apply {
-            text = "Huidige map: ${tree.lastPathSegment ?: "Fotomap"}"
+            text = "Huidige map: ${tree.lastPathSegment ?: "Mediamap"}"
             textSize = 15f
             setPadding(12, 10, 12, 10)
             setTextColor(Color.rgb(15, 69, 122))
@@ -1094,7 +1094,7 @@ class MainActivity : ComponentActivity() {
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; setSingleLine(true) }
+        val searchInput = EditText(this).apply { hint = "Zoek op medianaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
         searchRow.addView(Button(this).apply {
             text = "Zoeken"
@@ -1150,7 +1150,7 @@ class MainActivity : ComponentActivity() {
 
         fun caption(entry: ExplorerEntry, expanded: Boolean): String {
             val c = counts[entry.uri.toString()]
-            val total = if (c == null) "(tellen…)" else "(${c.first} subalbums, ${c.second} foto's)"
+            val total = if (c == null) "(tellen…)" else "(${c.first} subalbums, ${c.second} media)"
             return "📁  ${entry.name} $total"
         }
 
@@ -1311,7 +1311,7 @@ class MainActivity : ComponentActivity() {
         }
         content.addView(TextView(this).apply { text = "Mappen laden…" })
         explorerOpen = true
-        openFullScreen("Foto-verkenner", root)
+        openFullScreen("MediaVerkenner", root)
         // De boom en de totaalaantallen worden buiten de UI-thread ingelezen.
         dimensionWorker.execute {
             cache[rootUri.toString()] = try {
@@ -1324,7 +1324,7 @@ class MainActivity : ComponentActivity() {
                     val entryName = label.tag as? String ?: continue
                     val c = counts[key] ?: continue
                     val isExpanded = opened.contains(key)
-                    label.text = "📁  $entryName (${c.first} subalbums, ${c.second} foto's)"
+                    label.text = "📁  $entryName (${c.first} subalbums, ${c.second} media)"
                 }
             }
             }
@@ -2025,8 +2025,8 @@ class MainActivity : ComponentActivity() {
         setButtonProgress(previewButton, 0)
         previewButton.text = "2. FOTO'S ANALYSEREN — 0%"
         setButtonProgress(moveButton, 0)
-        moveButton.text = "3. Foto's verplaatsen"
-        status.text = "Foto's analyseren…"
+        moveButton.text = "3. Media verplaatsen"
+        status.text = "Media analyseren…"
         worker.execute {
             val plans = plan { percent ->
                 runOnUiThread {
@@ -2051,7 +2051,7 @@ class MainActivity : ComponentActivity() {
                     "Voorbeeld gereed\nTotaal: ${plans.size}" +
                     "\nMet datum: $ok" +
                     "\nZonder bruikbare datum: $bad\n\n" +
-                    sample.ifBlank { "Geen foto's gevonden." }
+                    sample.ifBlank { "Geen media gevonden." }
             }
         }
     }
@@ -2071,7 +2071,7 @@ class MainActivity : ComponentActivity() {
         val message = TextView(this).apply {
             textSize = 16f
             setPadding(48, 24, 48, 8)
-            text = SpannableString("Bronmap: $sourceName\\n\\nFoto's worden verplaatst naar Datummap/Locatiemap/Bestandsnaam. Maak eerst een reservekopie. Doorgaan?\\n\\nBronmap openen")
+            text = SpannableString("Bronmap: $sourceName\\n\\nMedia worden verplaatst naar Datummap/Locatiemap/Bestandsnaam. Maak eerst een reservekopie. Doorgaan?\\n\\nBronmap openen")
             movementMethod = LinkMovementMethod.getInstance()
             val s = text as SpannableString
             val label = "Bronmap openen"
@@ -2087,7 +2087,7 @@ class MainActivity : ComponentActivity() {
             }, start, start + label.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         AlertDialog.Builder(this)
-            .setTitle("Foto's verplaatsen?")
+            .setTitle("Media verplaatsen?")
             .setView(message)
             .setNegativeButton("Annuleren", null)
             .setPositiveButton("Verplaatsen") { _, _ -> moveFiles() }
@@ -2098,7 +2098,7 @@ class MainActivity : ComponentActivity() {
         val tree = sourceTree ?: return
         moveRunning = true
         setButtonProgress(moveButton, 0)
-        moveButton.text = "3. Foto's verplaatsen — 0%"
+        moveButton.text = "3. Media verplaatsen — 0%"
         status.text = "Verwerken gestart… Laat de app open."
 
         worker.execute {
@@ -2179,8 +2179,8 @@ class MainActivity : ComponentActivity() {
                 val percent = if (plans.isEmpty()) 100 else ((index + 1) * 100 / plans.size)
                 runOnUiThread {
                     setButtonProgress(moveButton, percent, completed = percent == 100)
-                    moveButton.text = "3. Foto's verplaatsen — ${percent}%"
-                    status.text = "Foto's verplaatsen: ${percent}%"
+                    moveButton.text = "3. Media verplaatsen — ${percent}%"
+                    status.text = "Media verplaatsen: ${percent}%"
                 }
             }
 
@@ -2216,7 +2216,7 @@ class MainActivity : ComponentActivity() {
                     movementMethod = LinkMovementMethod.getInstance()
                 }
                 AlertDialog.Builder(this)
-                    .setTitle("FotoOrdenaar klaar")
+                    .setTitle("MediaOrdenaar klaar")
                     .setView(albumMessage)
                     .setPositiveButton("OK", null)
                     .show()
