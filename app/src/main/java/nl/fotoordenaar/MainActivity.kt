@@ -655,12 +655,12 @@ class MainActivity : ComponentActivity() {
             val containerTags = videoContainerTags(entry.uri)
             val extraDetails = containerTags.joinToString("\n") { (name, value) -> "$name: $value" }
             val mediaInfoReport = nativeMediaInfo(entry.uri)
-            val details = "=== 1. MediaInfoLib (ruwe uitvoer) ===\\n" + mediaInfoReport +
-                "\\n\\n=== 2. MP4-containergegevens ===\\n" +
+            val details = "=== 1. MediaInfoLib (ruwe uitvoer) ===\n" + mediaInfoReport +
+                "\n\n=== 2. MP4-containergegevens ===\n" +
                 (if (extraDetails.isNotEmpty()) extraDetails else "[Geen tags gevonden]") +
-                "\\n\\n=== 3. Android-metadata en diagnose ===\\n" +
+                "\n\n=== 3. Android-metadata en diagnose ===\n" +
                 videoTechnicalInfo(entry.uri) +
-                "\\nMP4-tag-aantal: ${containerTags.size}\\nGPS uit uitleesmethoden: " +
+                "\nMP4-tag-aantal: ${containerTags.size}\nGPS uit uitleesmethoden: " +
                 (if (gps != null) "gevonden" else "niet gevonden")
             val gpsText = gps?.let {
                 "${"%.5f".format(Locale.US, it[0])}, ${"%.5f".format(Locale.US, it[1])}"
