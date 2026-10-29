@@ -710,7 +710,7 @@ class MainActivity : ComponentActivity() {
     // ISO 6709: +52.12345+006.12345/ (soms met hoogte of ISO-prefix).
     private fun parseVideoGps(raw: String?): DoubleArray? {
         if (raw.isNullOrBlank()) return null
-        val match = Regex("""([+-]\\d{1,2}(?:\\.\\d+)?)([+-]\\d{1,3}(?:\\.\\d+)?)""")
+        val match = Regex("""([+-]\d{1,2}(?:\.\d+)?)([+-]\d{1,3}(?:\.\d+)?)""")
             .find(raw) ?: return null
         val lat = match.groupValues[1].toDoubleOrNull() ?: return null
         val lon = match.groupValues[2].toDoubleOrNull() ?: return null
