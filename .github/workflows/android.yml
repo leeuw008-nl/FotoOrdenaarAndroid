@@ -21,6 +21,7 @@ on:
       - test/mediaverkenner-mp4-gps-audio-2026-10-29
       - fix/mediaverkenner-metadata-niet-blokkeren-2026-10-29
       - fix/mediaverkenner-video-original-gps-2026-10-29
+      - fix/mediaverkenner-groene-tabs-2026-10-29
 
 permissions:
   contents: read
