@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fix/gps-xmp-diagnostics
+      - feature/MediaVerkenner-standalone-datumzoekfunctie-2026-10-30
       - restore/fotoverkenner-backup-test-2026-10-29
       - test/fotoverkenner-video-vanaf-werkende-gps-2026-10-29
       - test/mediaverkenner-video-gps-metadata-2026-10-29
@@ -61,7 +62,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FotoOrdenaar-APK
+          name: MediaVerkenner-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
