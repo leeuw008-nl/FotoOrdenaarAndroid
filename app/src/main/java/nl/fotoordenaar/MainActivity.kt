@@ -621,10 +621,12 @@ class MainActivity : ComponentActivity() {
         }
         var fullscreen = false
         var videoToolbar: LinearLayout? = null
+        var fullscreenNavigation: LinearLayout? = null
         fun updateVideoLayout() {
             tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
             tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
             navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            fullscreenNavigation?.visibility = if (fullscreen) View.VISIBLE else View.GONE
             videoToolbar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
             window.decorView.systemUiVisibility = if (fullscreen)
                 (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
@@ -698,7 +700,9 @@ class MainActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             navOverlay.addView(next)
             videoFrame.addView(navOverlay, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-            videoFrame.setOnClickListener { navOverlay.visibility = if (navOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+            fullscreenNavigation = navOverlay
+            // De knoppen blijven zichtbaar tijdens het afspelen, ook als VideoView aanrakingen opvangt.
+            navOverlay.visibility = if (fullscreen) View.VISIBLE else View.GONE
         }
         fullscreenButton.setOnClickListener {
             fullscreen = !fullscreen
