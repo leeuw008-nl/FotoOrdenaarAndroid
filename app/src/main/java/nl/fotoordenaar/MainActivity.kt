@@ -437,7 +437,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun closeFullScreen() {
+        // Bewaar de herkomst op de schermstapel: Gallery -> media -> Gallery,
+        // zoekresultaten -> media -> zoekresultaten, album -> media -> album.
+        // Stop een eventueel nog spelende video voordat het scherm verdwijnt.
+        val current = screenStack.lastOrNull()
+        fun stopVideo(view: View?) {
+            when (view) {
+                is VideoView -> {
+                    try { view.stopPlayback() } catch (_: Exception) {}
+                }
+                is ViewGroup -> for (i in 0 until view.childCount) stopVideo(view.getChildAt(i))
+            }
+        }
+        stopVideo(current)
         if (screenStack.isNotEmpty()) screenStack.removeAt(screenStack.lastIndex)
+        // Fullscreen-videomodus mag niet doorwerken op het vorige scherm.
+        window.decorView.systemUiVisibility = 0
         val previous = screenStack.lastOrNull() ?: homeView
         if (previous != null) setContentView(previous)
         if (screenStack.isEmpty()) explorerOpen = false
@@ -1942,15 +1957,34 @@ class MainActivity : ComponentActivity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(currentFolder)
-        val allButton = Button(this).apply { text = "Alles uitklappen" }
-        root.addView(allButton)
-        // De bestaande showFolderGallery doorzoekt ook alle submappen.
-        // Vanaf de Mediamap levert dit één gezamenlijke galerij op.
-        root.addView(Button(this).apply {
-            text = "Gallery – alle media"
-            contentDescription = "Toon alle foto's en video's uit de Mediamap en alle onderliggende albums"
+        // Drie gelijkwaardige acties op één rij; de knoppen passen zich aan de schermbreedte aan.
+        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val allButton = Button(this).apply {
+            text = "Alles uitklappen"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+        }
+        actionRow.addView(allButton, LinearLayout.LayoutParams(0, -2, 1f))
+        actionRow.addView(Button(this).apply {
+            text = "Gallery - alle media"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+            contentDescription = "Toon alle foto's en video's uit de Mediamap en onderliggende albums"
             setOnClickListener { showFolderGallery(rootUri, "Alle media") }
-        })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        actionRow.addView(Button(this).apply {
+            text = "Zoek in metadata"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+            setOnClickListener { showMetadataSearchWindow(rootUri) }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(actionRow)
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val searchInput = EditText(this).apply { hint = "Zoek op medianaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
@@ -1963,10 +1997,6 @@ class MainActivity : ComponentActivity() {
             }
         })
         root.addView(searchRow)
-        root.addView(Button(this).apply {
-            text = "Zoek in Metadata"
-            setOnClickListener { showMetadataSearchWindow(rootUri) }
-        })
         root.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
@@ -2150,7 +2180,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         label.setOnClickListener {
-                            currentFolder.text = "Huidige map: ${entry.name}"
                             showPhotoFromFolder(entry.uri, entry.name, parent)
                         }
                     }
