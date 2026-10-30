@@ -1773,12 +1773,38 @@ class MainActivity : ComponentActivity() {
         val close = Button(this).apply { text = "✕" }
         header.addView(close)
         layout.addView(header)
-        val mode = android.widget.Spinner(this)
-        mode.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-            listOf("Datum (jjjj-mm-dd)", "Maand (jjjj-mm)", "Jaar (jjjj)"))
-        layout.addView(mode)
-        val input = EditText(this).apply { hint = "jjjj-mm-dd / jjjj-mm / jjjj"; setSingleLine(true) }
-        layout.addView(input)
+        // Bewerkbare keuzelijsten: zelf typen of via het pijltje kiezen.
+        fun dateField(label: String, values: List<String>): android.widget.AutoCompleteTextView {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply { text = label; textSize = 16f },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            val field = android.widget.AutoCompleteTextView(this).apply {
+                hint = "Alle"
+                setSingleLine(true)
+                threshold = 0
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                setAdapter(android.widget.ArrayAdapter(this@MainActivity,
+                    android.R.layout.simple_dropdown_item_1line, values))
+            }
+            row.addView(field, LinearLayout.LayoutParams(0, -2, 2f))
+            row.addView(Button(this).apply {
+                text = "▾"
+                contentDescription = "$label kiezen"
+                setOnClickListener { field.showDropDown() }
+            })
+            layout.addView(row)
+            return field
+        }
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val yearField = dateField("Jaar", (currentYear downTo 1900).map { it.toString() })
+        val monthField = dateField("Maand", (1..12).map { "%02d".format(Locale.US, it) })
+        val dayField = dateField("Dag", (1..31).map { "%02d".format(Locale.US, it) })
+        layout.addView(TextView(this).apply {
+            text = "Laat een veld leeg om alle waarden toe te staan."
+        })
         val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
         layout.addView(progress, LinearLayout.LayoutParams(-1,-2))
         val label = TextView(this).apply { text = "Kies een zoekoptie."; setPadding(0,10,0,10) }
@@ -1789,21 +1815,38 @@ class MainActivity : ComponentActivity() {
         close.setOnClickListener { cancelled.set(true); dialog.dismiss() }
         dialog.setOnDismissListener { cancelled.set(true) }
         start.setOnClickListener {
-            val value = input.text.toString().trim()
-            val pattern = when (mode.selectedItemPosition) {
-                0 -> Regex("""^\d{4}-\d{2}-\d{2}$""")
-                1 -> Regex("""^\d{4}-\d{2}$""")
-                else -> Regex("""^\d{4}$""")
+            val year = yearField.text.toString().trim()
+            val month = monthField.text.toString().trim()
+            val day = dayField.text.toString().trim()
+            val y = year.toIntOrNull()
+            val m = month.toIntOrNull()
+            val d = day.toIntOrNull()
+            if (year.isEmpty() && month.isEmpty() && day.isEmpty()) {
+                yearField.error = "Vul minimaal één veld in"
+                return@setOnClickListener
             }
-            val valid = pattern.matches(value) &&
-                (value.length < 7 || (value.substring(5,7).toIntOrNull() ?: 0) in 1..12) &&
-                (value.length < 10 || try {
-                    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(value) != null
-                } catch (_: Exception) { false })
-            if (!valid) { input.error = "Ongeldige datum"; return@setOnClickListener }
+            if ((year.isNotEmpty() && (year.length != 4 || y == null || y !in 1..9999)) ||
+                (month.isNotEmpty() && (m == null || m !in 1..12)) ||
+                (day.isNotEmpty() && (d == null || d !in 1..31))) {
+                yearField.error = "Controleer jaar, maand en dag"
+                return@setOnClickListener
+            }
+            if (y != null && m != null && d != null) {
+                val validDate = try {
+                    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+                        .parse("%04d-%02d-%02d".format(Locale.US, y, m, d)) != null
+                } catch (_: Exception) { false }
+                if (!validDate) { dayField.error = "Ongeldige kalenderdatum"; return@setOnClickListener }
+            }
+            val value = listOf(
+                year.ifEmpty { "*" },
+                if (m == null) "*" else "%02d".format(Locale.US, m),
+                if (d == null) "*" else "%02d".format(Locale.US, d)
+            ).joinToString("-")
             start.isEnabled = false
-            mode.isEnabled = false
-            input.isEnabled = false
+            yearField.isEnabled = false
+            monthField.isEnabled = false
+            dayField.isEnabled = false
             progress.isIndeterminate = true
             label.text = "Mediabestanden inventariseren…"
             metadataSearchWorker.execute {
@@ -1839,7 +1882,12 @@ class MainActivity : ComponentActivity() {
                 val matches = mutableListOf<ExplorerEntry>()
                 for ((index, entry) in media.withIndex()) {
                     if (cancelled.get()) return@execute
-                    if (searchRecordingDate(entry)?.startsWith(value) == true) matches.add(entry)
+                    if (searchRecordingDate(entry)?.let { recorded ->
+                        val parts = recorded.split("-")
+                        (y == null || parts.getOrNull(0)?.toIntOrNull() == y) &&
+                        (m == null || parts.getOrNull(1)?.toIntOrNull() == m) &&
+                        (d == null || parts.getOrNull(2)?.toIntOrNull() == d)
+                    } == true) matches.add(entry)
                     val scanned = index + 1
                     if (scanned % 5 == 0 || scanned == media.size) {
                         val found = matches.size
