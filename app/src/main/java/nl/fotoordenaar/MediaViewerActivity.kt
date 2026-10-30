@@ -1729,6 +1729,67 @@ class MediaViewerActivity : ComponentActivity() {
         }
     }
 
+    // Zoek uitsluitend in de opnamedatum van de metadata, niet in bestandsnamen.
+    // Invoer: jjjj, jjjj-mm of jjjj-mm-dd.
+    private fun metadataRecordingDate(entry: ExplorerEntry): String? {
+        if (isVideoEntry(entry)) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                contentResolver.openFileDescriptor(entry.uri, "r")?.use { fd ->
+                    retriever.setDataSource(fd.fileDescriptor)
+                    val raw = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                    if (raw != null) {
+                        val compact = Regex("^(\\d{4})(\\d{2})(\\d{2})").find(raw)
+                        if (compact != null) return compact.groupValues[1] + "-" +
+                            compact.groupValues[2] + "-" + compact.groupValues[3]
+                        val dashed = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(raw)
+                        if (dashed != null) return dashed.groupValues[1]
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+            return null
+        }
+        val date = captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
+        return date?.let { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(it) }
+    }
+
+    private fun showMetadataDateSearch(rootUri: Uri, datePrefix: String) {
+        val loading = TextView(this).apply {
+            text = "Opnamedatums in metadata doorzoeken: $datePrefix…"
+            setPadding(20, 20, 20, 20)
+        }
+        openFullScreen("Opnamedatum: $datePrefix", loading)
+        photoWorker.execute {
+            val matches = mutableListOf<ExplorerEntry>()
+            val pending = java.util.ArrayDeque<Uri>()
+            val visited = HashSet<String>()
+            pending.add(rootUri)
+            while (!pending.isEmpty()) {
+                val uri = pending.removeLast()
+                if (!visited.add(uri.toString())) continue
+                val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                for (entry in entries) {
+                    if (entry.isDirectory) pending.add(entry.uri)
+                    else if (isImageEntry(entry) &&
+                        metadataRecordingDate(entry)?.startsWith(datePrefix) == true) {
+                        matches.add(entry)
+                    }
+                }
+            }
+            matches.sortBy { it.name.lowercase(Locale.ROOT) }
+            runOnUiThread {
+                if (loading.parent != null) {
+                    if (matches.isEmpty()) loading.text =
+                        "Geen media met opnamedatum $datePrefix in de metadata gevonden."
+                    else renderPhotoGrid(matches, loading)
+                }
+            }
+        }
+    }
+
     private fun showExplorer(organizedOnly: Boolean) {
         val tree = sourceTree ?: run {
             status.text = "Kies eerst een mediamap."
@@ -1756,10 +1817,10 @@ class MediaViewerActivity : ComponentActivity() {
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; setSingleLine(true) }
+        val searchInput = EditText(this).apply { hint = "Zoek op medianaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
         searchRow.addView(Button(this).apply {
-            text = "Zoeken"
+            text = "Naam zoeken"
             setOnClickListener {
                 val term = searchInput.text.toString().trim()
                 if (term.isBlank()) { searchInput.error = "Zoekterm invullen" }
@@ -1767,6 +1828,25 @@ class MediaViewerActivity : ComponentActivity() {
             }
         })
         root.addView(searchRow)
+        val dateRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val dateInput = EditText(this).apply {
+            hint = "Opnamedatum: jjjj-mm-dd (of jjjj-mm / jjjj)"
+            setSingleLine(true)
+        }
+        dateRow.addView(dateInput, LinearLayout.LayoutParams(0, -2, 1f))
+        dateRow.addView(Button(this).apply {
+            text = "Datum zoeken"
+            setOnClickListener {
+                val date = dateInput.text.toString().trim()
+                if (!Regex("^\\d{4}(-\\d{2}(-\\d{2})?)?$").matches(date)) {
+                    dateInput.error = "Gebruik jjjj, jjjj-mm of jjjj-mm-dd"
+                } else if ((date.length >= 7 && (date.substring(5, 7).toIntOrNull() ?: 0) !in 1..12) ||
+                    (date.length == 10 && (date.substring(8, 10).toIntOrNull() ?: 0) !in 1..31)) {
+                    dateInput.error = "Ongeldige datum"
+                } else showMetadataDateSearch(rootUri, date)
+            }
+        })
+        root.addView(dateRow)
         root.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
