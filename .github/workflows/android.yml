@@ -10,6 +10,7 @@ on:
       - fix/MediaVerkenner-kaart-gps-voortgang-2026-10-30
       - feature/MediaVerkenner-jaar-maand-dag-velden-2026-10-30
       - fix/MediaVerkenner-video-vorige-volgende-zichtbaar-2026-10-30
+      - feature/MediaVerkenner-gallery-alle-media-2026-10-30
       - restore/fotoverkenner-backup-test-2026-10-29
       - test/fotoverkenner-video-vanaf-werkende-gps-2026-10-29
       - test/mediaverkenner-video-gps-metadata-2026-10-29
