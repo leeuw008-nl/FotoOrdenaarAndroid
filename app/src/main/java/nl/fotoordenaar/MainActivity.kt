@@ -1652,7 +1652,7 @@ class MainActivity : ComponentActivity() {
                     if (address == null) "Onbekende locatie" else {
                         val gemeente = address.subAdminArea ?: address.locality ?: "Onbekende gemeente"
                         val plaats = address.locality ?: address.subLocality ?: "Onbekende plaats"
-                        "$"+"{gemeente} - $"+"{plaats}"
+                        "${gemeente} - ${plaats}"
                     }
                 }
             } catch (_: Exception) { "Onbekende locatie" }
@@ -1844,6 +1844,10 @@ class MainActivity : ComponentActivity() {
                 photos.forEachIndexed { index, photo ->
                     // Een nieuwe keuze onderbreekt de oude scan tussen bestanden.
                     if (request != generation) return@execute
+                    if (index == 0 || index % 5 == 0) runOnUiThread {
+                        if (request == generation && progress.parent != null)
+                            progress.text = "Bestand ${index + 1} / ${photos.size} wordt onderzocht…"
+                    }
                     try {
                         galleryInfo(photo, mode == 2)
                     } catch (_: Exception) {
