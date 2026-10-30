@@ -1621,7 +1621,7 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (_: Exception) {}
         } else if (!withPlace || cached.place != null) return cached
-        val date = cached?.date ?: try {
+        val date = cached?.date ?: if (withPlace) null else try {
             if (isVideoEntry(entry)) videoMetadata(entry.uri).first
             else captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
         } catch (_: Exception) { null }
@@ -1839,16 +1839,21 @@ class MainActivity : ComponentActivity() {
             progressBar.visibility = View.VISIBLE
             progressBar.max = photos.size.coerceAtLeast(1)
             progressBar.progress = 0
-            progress.text = "Metadata lezen… 0 / $"+"{photos.size}"
+            progress.text = "Metadata lezen… 0 / ${photos.size}"
             galleryInfoWorker.execute {
                 photos.forEachIndexed { index, photo ->
                     // Een nieuwe keuze onderbreekt de oude scan tussen bestanden.
                     if (request != generation) return@execute
-                    galleryInfo(photo, mode == 2)
-                    if ((index + 1) % 5 == 0 || index == photos.lastIndex) runOnUiThread {
+                    try {
+                        galleryInfo(photo, mode == 2)
+                    } catch (_: Exception) {
+                        // Een onleesbaar bestand mag de volledige scan niet afbreken.
+                        galleryInfoCache[photo.uri.toString()] = GalleryInfo(null, "Onbekende locatie")
+                    }
+                    if (index % 1 == 0) runOnUiThread {
                         if (request == generation && progress.parent != null) {
                             progressBar.progress = index + 1
-                            progress.text = "Metadata lezen… $"+"{index + 1} / $"+"{photos.size}"
+                            progress.text = "Metadata lezen… ${index + 1} / ${photos.size}"
                         }
                     }
                 }
@@ -1873,11 +1878,25 @@ class MainActivity : ComponentActivity() {
             }
         }
         dateChoice.setOnCheckedChangeListener { _, checked ->
-            if (checked) placeChoice.isChecked = false
+            if (checked && placeChoice.isChecked) {
+                placeChoice.setOnCheckedChangeListener(null)
+                placeChoice.isChecked = false
+                placeChoice.setOnCheckedChangeListener { _, selected ->
+                    if (selected && dateChoice.isChecked) dateChoice.isChecked = false
+                    reload()
+                }
+            }
             reload()
         }
         placeChoice.setOnCheckedChangeListener { _, checked ->
-            if (checked) dateChoice.isChecked = false
+            if (checked && dateChoice.isChecked) {
+                dateChoice.setOnCheckedChangeListener(null)
+                dateChoice.isChecked = false
+                dateChoice.setOnCheckedChangeListener { _, selected ->
+                    if (selected && placeChoice.isChecked) placeChoice.isChecked = false
+                    reload()
+                }
+            }
             reload()
         }
         var mapStarted = false
