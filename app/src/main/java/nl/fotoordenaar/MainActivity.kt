@@ -1944,6 +1944,13 @@ class MainActivity : ComponentActivity() {
         root.addView(currentFolder)
         val allButton = Button(this).apply { text = "Alles uitklappen" }
         root.addView(allButton)
+        // De bestaande showFolderGallery doorzoekt ook alle submappen.
+        // Vanaf de Mediamap levert dit één gezamenlijke galerij op.
+        root.addView(Button(this).apply {
+            text = "Gallery – alle media"
+            contentDescription = "Toon alle foto's en video's uit de Mediamap en alle onderliggende albums"
+            setOnClickListener { showFolderGallery(rootUri, "Alle media") }
+        })
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val searchInput = EditText(this).apply { hint = "Zoek op medianaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
