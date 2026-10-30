@@ -1479,7 +1479,9 @@ class MainActivity : ComponentActivity() {
         }
         holder.addView(status)
         // Apart van het renderen van foto's: de bestaande GPS-methoden blijven ongewijzigd.
-        albumMapWorker.execute {
+        val gpsScanWorker = Executors.newSingleThreadExecutor()
+        gpsScanWorker.execute {
+            try {
             val pins = mutableListOf<Triple<Int, Double, Double>>()
             photos.forEachIndexed { index, photo ->
                 val coords = try {
@@ -1499,7 +1501,7 @@ class MainActivity : ComponentActivity() {
                     (coords[0] != 0.0 || coords[1] != 0.0)) {
                     pins.add(Triple(index, coords[0], coords[1]))
                 }
-                if ((index + 1) % 20 == 0 || index == photos.lastIndex) {
+                if ((index + 1) % 5 == 0 || index == photos.lastIndex) {
                     runOnUiThread {
                         if (status.parent != null) status.text =
                             "GPS-locaties zoeken… ${index + 1} / ${photos.size}"
@@ -1559,6 +1561,14 @@ class MainActivity : ComponentActivity() {
                     loadDataWithBaseURL("https://unpkg.com/", html, "text/html", "UTF-8", null)
                 }
                 holder.addView(web, FrameLayout.LayoutParams(-1, -1))
+            }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (status.parent != null) status.text =
+                        "GPS-locaties zoeken mislukt: " + (error.message ?: error.javaClass.simpleName)
+                }
+            } finally {
+                gpsScanWorker.shutdown()
             }
         }
     }
