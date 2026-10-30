@@ -1752,38 +1752,112 @@ class MainActivity : ComponentActivity() {
         return date?.let { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(it) }
     }
 
-    private fun showDateSearchGallery(rootUri: Uri, datePrefix: String) {
-        val loading = TextView(this).apply {
-            text = "Opnamedatums zoeken: $datePrefix…"
-            setPadding(20, 20, 20, 20)
-        }
-        openFullScreen("Opnamedatum: $datePrefix", loading)
-        photoWorker.execute {
-            val matches = mutableListOf<ExplorerEntry>()
-            val pending = java.util.ArrayDeque<Uri>()
-            val visited = HashSet<String>()
-            pending.add(rootUri)
-            while (!pending.isEmpty()) {
-                val uri = pending.removeLast()
-                if (!visited.add(uri.toString())) continue
-                val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
-                for (entry in entries) {
-                    if (entry.isDirectory) pending.add(entry.uri)
-                    else if (isImageEntry(entry) &&
-                        searchRecordingDate(entry)?.startsWith(datePrefix) == true) {
-                        matches.add(entry)
+
+    private val metadataSearchWorker = Executors.newSingleThreadExecutor()
+    private fun showMetadataSearchWindow(rootUri: Uri) {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,12,24,12) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this).apply { text = "Zoek in Metadata"; textSize = 20f },
+            LinearLayout.LayoutParams(0,-2,1f))
+        val close = Button(this).apply { text = "✕" }
+        header.addView(close)
+        layout.addView(header)
+        val mode = android.widget.Spinner(this)
+        mode.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
+            listOf("Datum (jjjj-mm-dd)", "Maand (jjjj-mm)", "Jaar (jjjj)"))
+        layout.addView(mode)
+        val input = EditText(this).apply { hint = "jjjj-mm-dd / jjjj-mm / jjjj"; setSingleLine(true) }
+        layout.addView(input)
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        layout.addView(progress, LinearLayout.LayoutParams(-1,-2))
+        val label = TextView(this).apply { text = "Kies een zoekoptie."; setPadding(0,10,0,10) }
+        layout.addView(label)
+        val start = Button(this).apply { text = "Zoeken" }
+        layout.addView(start)
+        val dialog = AlertDialog.Builder(this).setView(layout).create()
+        close.setOnClickListener { cancelled.set(true); dialog.dismiss() }
+        dialog.setOnDismissListener { cancelled.set(true) }
+        start.setOnClickListener {
+            val value = input.text.toString().trim()
+            val pattern = when (mode.selectedItemPosition) {
+                0 -> Regex("""^\d{4}-\d{2}-\d{2}$""")
+                1 -> Regex("""^\d{4}-\d{2}$""")
+                else -> Regex("""^\d{4}$""")
+            }
+            val valid = pattern.matches(value) &&
+                (value.length < 7 || (value.substring(5,7).toIntOrNull() ?: 0) in 1..12) &&
+                (value.length < 10 || try {
+                    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(value) != null
+                } catch (_: Exception) { false })
+            if (!valid) { input.error = "Ongeldige datum"; return@setOnClickListener }
+            start.isEnabled = false
+            mode.isEnabled = false
+            input.isEnabled = false
+            progress.isIndeterminate = true
+            label.text = "Mediabestanden inventariseren…"
+            metadataSearchWorker.execute {
+                val pending = java.util.ArrayDeque<Uri>()
+                val visited = HashSet<String>()
+                val media = mutableListOf<ExplorerEntry>()
+                pending.add(rootUri)
+                while (!pending.isEmpty() && !cancelled.get()) {
+                    val uri = pending.removeLast()
+                    if (!visited.add(uri.toString())) continue
+                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                    for (entry in entries) {
+                        if (cancelled.get()) break
+                        if (entry.isDirectory) pending.add(entry.uri)
+                        else if (isImageEntry(entry)) media.add(entry)
+                    }
+                    if (visited.size % 10 == 0) {
+                        val folders = visited.size
+                        val files = media.size
+                        runOnUiThread {
+                            if (!cancelled.get()) label.text = "Inventariseren: $folders mappen, $files bestanden"
+                        }
                     }
                 }
-            }
-            matches.sortBy { it.name.lowercase(Locale.ROOT) }
-            runOnUiThread {
-                if (loading.parent != null) {
-                    if (matches.isEmpty()) loading.text =
-                        "Geen media met opnamedatum $datePrefix in metadata gevonden."
-                    else renderPhotoGrid(matches, loading)
+                if (cancelled.get()) return@execute
+                runOnUiThread {
+                    if (!cancelled.get()) {
+                        progress.isIndeterminate = false
+                        progress.max = media.size.coerceAtLeast(1)
+                        progress.progress = 0
+                    }
+                }
+                val matches = mutableListOf<ExplorerEntry>()
+                for ((index, entry) in media.withIndex()) {
+                    if (cancelled.get()) return@execute
+                    if (searchRecordingDate(entry)?.startsWith(value) == true) matches.add(entry)
+                    val scanned = index + 1
+                    if (scanned % 5 == 0 || scanned == media.size) {
+                        val found = matches.size
+                        val total = media.size
+                        runOnUiThread {
+                            if (!cancelled.get()) {
+                                progress.progress = scanned
+                                label.text = "$scanned / $total onderzocht · $found gevonden"
+                            }
+                        }
+                    }
+                }
+                if (cancelled.get()) return@execute
+                matches.sortBy { it.name.lowercase(Locale.ROOT) }
+                runOnUiThread {
+                    if (cancelled.get()) return@runOnUiThread
+                    dialog.dismiss()
+                    val loading = TextView(this).apply {
+                        text = if (matches.isEmpty()) "Geen media met opnamedatum $value gevonden."
+                            else "Zoekresultaten"
+                        setPadding(20,20,20,20)
+                    }
+                    openFullScreen("Metadata: $value", loading)
+                    if (matches.isNotEmpty()) renderPhotoGrid(matches, loading)
                 }
             }
         }
+        dialog.show()
     }
 
     private fun showExplorer(organizedOnly: Boolean) {
@@ -1820,25 +1894,10 @@ class MainActivity : ComponentActivity() {
             }
         })
         root.addView(searchRow)
-        val dateRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val dateInput = EditText(this).apply {
-            hint = "Opnamedatum: jjjj-mm-dd (of jjjj-mm / jjjj)"
-            setSingleLine(true)
-        }
-        dateRow.addView(dateInput, LinearLayout.LayoutParams(0, -2, 1f))
-        dateRow.addView(Button(this).apply {
-            text = "Datum zoeken"
-            setOnClickListener {
-                val date = dateInput.text.toString().trim()
-                if (!Regex("^\\d{4}(-\\d{2}(-\\d{2})?)?$").matches(date)) {
-                    dateInput.error = "Gebruik jjjj, jjjj-mm of jjjj-mm-dd"
-                } else if ((date.length >= 7 && (date.substring(5, 7).toIntOrNull() ?: 0) !in 1..12) ||
-                    (date.length == 10 && (date.substring(8, 10).toIntOrNull() ?: 0) !in 1..31)) {
-                    dateInput.error = "Ongeldige datum"
-                } else showDateSearchGallery(rootUri, date)
-            }
+        root.addView(Button(this).apply {
+            text = "Zoek in Metadata"
+            setOnClickListener { showMetadataSearchWindow(rootUri) }
         })
-        root.addView(dateRow)
         root.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
