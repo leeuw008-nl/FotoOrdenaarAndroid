@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
                     name,
                     mime == DocumentsContract.Document.MIME_TYPE_DIR,
                     if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null,
-                    if (modifiedCol >= 0 && !cursor.isNull(modifiedCol)) cursor.getLong(modifiedCol) else null
+                    if (modifiedCol >= 0 && !cursor.isNull(modifiedCol)) cursor.getLong(modifiedCol).takeIf { it > 0L } else null
                 )
             }
         }
@@ -1596,7 +1596,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private data class GalleryInfo(val date: Date?, val place: String?)
+    private data class GalleryInfo(val date: Date?, val place: String?, val dateScanned: Boolean = false, val placeScanned: Boolean = false)
     private val galleryInfoCache = java.util.concurrent.ConcurrentHashMap<String, GalleryInfo>()
     private val galleryInfoWorker = Executors.newSingleThreadExecutor()
 
@@ -1605,7 +1605,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun galleryInfo(entry: ExplorerEntry, withPlace: Boolean): GalleryInfo {
         val key = entry.uri.toString()
-        val signature = "$"+"{entry.sizeBytes ?: -1}:$"+"{entry.modifiedAt ?: -1}"
+        val signature = "${entry.sizeBytes ?: -1}:${entry.modifiedAt ?: -1}"
         var cached = galleryInfoCache[key]
         if (cached == null) {
             val saved = galleryMetadataPrefs.getString(key, null)
@@ -1614,19 +1614,21 @@ class MainActivity : ComponentActivity() {
                 if (obj.optString("signature") == signature) {
                     cached = GalleryInfo(
                         if (obj.has("date") && !obj.isNull("date")) Date(obj.getLong("date")) else null,
-                        if (obj.has("place")) obj.optString("place") else null
+                        if (obj.has("place")) obj.optString("place") else null,
+                        obj.optBoolean("dateScanned", false),
+                        obj.optBoolean("placeScanned", false)
                     )
                     galleryInfoCache[key] = cached
-                    if (!withPlace || cached.place != null) return cached
+                    if ((withPlace && cached.placeScanned) || (!withPlace && cached.dateScanned)) return cached
                 }
             } catch (_: Exception) {}
-        } else if (!withPlace || cached.place != null) return cached
-        val date = cached?.date ?: if (withPlace) null else try {
+        }
+        val date = if (withPlace || cached?.dateScanned == true) cached?.date else try {
             if (isVideoEntry(entry)) videoMetadata(entry.uri).first
             else captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
         } catch (_: Exception) { null }
         var place = cached?.place
-        if (withPlace && place == null) {
+        if (withPlace && cached?.placeScanned != true) {
             place = try {
                 val coords = if (isVideoEntry(entry)) videoMetadata(entry.uri).second
                     else cachedGpsCoordinates(entry.name)
@@ -1657,15 +1659,43 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (_: Exception) { "Onbekende locatie" }
         }
-        val result = GalleryInfo(date, place)
+        val result = GalleryInfo(date, place, cached?.dateScanned == true || !withPlace, cached?.placeScanned == true || withPlace)
         galleryInfoCache[key] = result
         val obj = org.json.JSONObject().apply {
             put("signature", signature)
             put("date", date?.time ?: org.json.JSONObject.NULL)
             if (place != null) put("place", place)
+            put("dateScanned", result.dateScanned)
+            put("placeScanned", result.placeScanned)
         }
         galleryMetadataPrefs.edit().putString(key, obj.toString()).apply()
         return result
+    }
+
+    private fun fileModifiedTime(entry: ExplorerEntry): Long {
+        entry.modifiedAt?.takeIf { it > 0L }?.let { return it }
+        // Sommige SAF-providers leveren de datum niet bij de maplijst.
+        // Probeer dan het individuele document en daarna de MediaStore-index.
+        try {
+            contentResolver.query(entry.uri,
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val value = cursor.getLong(0)
+                    if (value > 0L) return value
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            val mediaUri = if (isVideoEntry(entry)) originalVideoMediaUri(entry.uri) else originalMediaUri(entry.uri)
+            contentResolver.query(mediaUri,
+                arrayOf(MediaStore.MediaColumns.DATE_MODIFIED), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val seconds = cursor.getLong(0)
+                    if (seconds > 0L) return seconds * 1000L
+                }
+            }
+        } catch (_: Exception) {}
+        return Long.MIN_VALUE
     }
 
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
@@ -1731,6 +1761,7 @@ class MainActivity : ComponentActivity() {
         }
         var ordered = photos
         var generation = 0
+        val fileDates = java.util.concurrent.ConcurrentHashMap<String, Long>()
         fun draw(entries: List<ExplorerEntry>, groupMode: Int) {
             grid.removeAllViews()
             if (entries.isEmpty()) {
@@ -1826,13 +1857,31 @@ class MainActivity : ComponentActivity() {
                 else -> 0
             }
             if (mode == 0) {
-                // Geen metadata lezen: de bestandsdatum komt rechtstreeks uit de SAF-mapindex.
                 progress.visibility = View.GONE
                 progressBar.visibility = View.GONE
+                // Toon de reeds bekende bestandsdatums meteen; vul ontbrekende
+                // SAF-datums daarna aan zonder EXIF of videometadata te openen.
                 ordered = photos.sortedWith(compareByDescending<ExplorerEntry> {
-                    it.modifiedAt ?: Long.MIN_VALUE
+                    it.modifiedAt ?: fileDates[it.uri.toString()] ?: Long.MIN_VALUE
                 }.thenBy { it.name.lowercase(Locale.ROOT) })
                 draw(ordered, 0)
+                if (photos.any { it.modifiedAt == null && !fileDates.containsKey(it.uri.toString()) }) {
+                    galleryInfoWorker.execute {
+                        photos.forEach { photo ->
+                            if (request != generation) return@execute
+                            if (photo.modifiedAt == null && !fileDates.containsKey(photo.uri.toString()))
+                                fileDates[photo.uri.toString()] = fileModifiedTime(photo)
+                        }
+                        runOnUiThread {
+                            if (request == generation && progress.parent != null) {
+                                ordered = photos.sortedWith(compareByDescending<ExplorerEntry> {
+                                    it.modifiedAt ?: fileDates[it.uri.toString()] ?: Long.MIN_VALUE
+                                }.thenBy { it.name.lowercase(Locale.ROOT) })
+                                draw(ordered, 0)
+                            }
+                        }
+                    }
+                }
                 return
             }
             progress.visibility = View.VISIBLE
@@ -1852,7 +1901,7 @@ class MainActivity : ComponentActivity() {
                         galleryInfo(photo, mode == 2)
                     } catch (_: Exception) {
                         // Een onleesbaar bestand mag de volledige scan niet afbreken.
-                        galleryInfoCache[photo.uri.toString()] = GalleryInfo(null, "Onbekende locatie")
+                        galleryInfoCache[photo.uri.toString()] = GalleryInfo(null, "Onbekende locatie", mode == 1, mode == 2)
                     }
                     if (index % 1 == 0) runOnUiThread {
                         if (request == generation && progress.parent != null) {
