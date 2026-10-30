@@ -246,7 +246,8 @@ class MainActivity : ComponentActivity() {
         val uri: Uri,
         val name: String,
         val isDirectory: Boolean,
-        val sizeBytes: Long?
+        val sizeBytes: Long?,
+        val modifiedAt: Long? = null
     )
 
     private fun explorerEntries(parent: Uri): List<ExplorerEntry> {
@@ -262,7 +263,8 @@ class MainActivity : ComponentActivity() {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
-                DocumentsContract.Document.COLUMN_SIZE
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED
             ),
             null, null,
             "${DocumentsContract.Document.COLUMN_DISPLAY_NAME} COLLATE NOCASE ASC"
@@ -271,6 +273,7 @@ class MainActivity : ComponentActivity() {
             val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
             val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+            val modifiedCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
             while (cursor.moveToNext()) {
                 val childId = cursor.getString(idCol) ?: continue
                 val name = cursor.getString(nameCol) ?: "(naamloos)"
@@ -279,7 +282,8 @@ class MainActivity : ComponentActivity() {
                     DocumentsContract.buildDocumentUriUsingTree(parentDoc, childId),
                     name,
                     mime == DocumentsContract.Document.MIME_TYPE_DIR,
-                    if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null
+                    if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null,
+                    if (modifiedCol >= 0 && !cursor.isNull(modifiedCol)) cursor.getLong(modifiedCol) else null
                 )
             }
         }
@@ -1596,10 +1600,27 @@ class MainActivity : ComponentActivity() {
     private val galleryInfoCache = java.util.concurrent.ConcurrentHashMap<String, GalleryInfo>()
     private val galleryInfoWorker = Executors.newSingleThreadExecutor()
 
+    private val galleryMetadataPrefs by lazy {
+        getSharedPreferences("media_verkenner_gallery_metadata_v1", MODE_PRIVATE)
+    }
     private fun galleryInfo(entry: ExplorerEntry, withPlace: Boolean): GalleryInfo {
         val key = entry.uri.toString()
-        val cached = galleryInfoCache[key]
-        if (cached != null && (!withPlace || cached.place != null)) return cached
+        val signature = "$"+"{entry.sizeBytes ?: -1}:$"+"{entry.modifiedAt ?: -1}"
+        var cached = galleryInfoCache[key]
+        if (cached == null) {
+            val saved = galleryMetadataPrefs.getString(key, null)
+            if (saved != null) try {
+                val obj = org.json.JSONObject(saved)
+                if (obj.optString("signature") == signature) {
+                    cached = GalleryInfo(
+                        if (obj.has("date") && !obj.isNull("date")) Date(obj.getLong("date")) else null,
+                        if (obj.has("place")) obj.optString("place") else null
+                    )
+                    galleryInfoCache[key] = cached
+                    if (!withPlace || cached.place != null) return cached
+                }
+            } catch (_: Exception) {}
+        } else if (!withPlace || cached.place != null) return cached
         val date = cached?.date ?: try {
             if (isVideoEntry(entry)) videoMetadata(entry.uri).first
             else captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
@@ -1631,12 +1652,20 @@ class MainActivity : ComponentActivity() {
                     if (address == null) "Onbekende locatie" else {
                         val gemeente = address.subAdminArea ?: address.locality ?: "Onbekende gemeente"
                         val plaats = address.locality ?: address.subLocality ?: "Onbekende plaats"
-                        if (gemeente.equals(plaats, ignoreCase = true)) plaats else "$"+"{gemeente} - $"+"{plaats}"
+                        "$"+"{gemeente} - $"+"{plaats}"
                     }
                 }
             } catch (_: Exception) { "Onbekende locatie" }
         }
-        return GalleryInfo(date, place).also { galleryInfoCache[key] = it }
+        val result = GalleryInfo(date, place)
+        galleryInfoCache[key] = result
+        val obj = org.json.JSONObject().apply {
+            put("signature", signature)
+            put("date", date?.time ?: org.json.JSONObject.NULL)
+            if (place != null) put("place", place)
+        }
+        galleryMetadataPrefs.edit().putString(key, obj.toString()).apply()
+        return result
     }
 
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
@@ -1678,14 +1707,20 @@ class MainActivity : ComponentActivity() {
             addView(placeChoice)
         }
         val progress = TextView(this).apply {
-            text = "Opnamedatums lezen…"
+            text = ""
+            visibility = View.GONE
             setPadding(12, 4, 12, 4)
+        }
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = photos.size.coerceAtLeast(1)
+            visibility = View.GONE
         }
         val galleryPage = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(choices, LinearLayout.LayoutParams(-1, -2))
             addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
             addView(progress, LinearLayout.LayoutParams(-1, -2))
+            addView(progressBar, LinearLayout.LayoutParams(-1, -2))
             addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         val holder = loading.parent as? ViewGroup
@@ -1790,14 +1825,31 @@ class MainActivity : ComponentActivity() {
                 placeChoice.isChecked -> 2
                 else -> 0
             }
+            if (mode == 0) {
+                // Geen metadata lezen: de bestandsdatum komt rechtstreeks uit de SAF-mapindex.
+                progress.visibility = View.GONE
+                progressBar.visibility = View.GONE
+                ordered = photos.sortedWith(compareByDescending<ExplorerEntry> {
+                    it.modifiedAt ?: Long.MIN_VALUE
+                }.thenBy { it.name.lowercase(Locale.ROOT) })
+                draw(ordered, 0)
+                return
+            }
             progress.visibility = View.VISIBLE
-            progress.text = if (mode == 2) "GPS-locaties en opnamedatums lezen…" else "Opnamedatums lezen…"
+            progressBar.visibility = View.VISIBLE
+            progressBar.max = photos.size.coerceAtLeast(1)
+            progressBar.progress = 0
+            progress.text = "Metadata lezen… 0 / $"+"{photos.size}"
             galleryInfoWorker.execute {
                 photos.forEachIndexed { index, photo ->
+                    // Een nieuwe keuze onderbreekt de oude scan tussen bestanden.
+                    if (request != generation) return@execute
                     galleryInfo(photo, mode == 2)
-                    if (index % 10 == 0 || index == photos.lastIndex) runOnUiThread {
-                        if (request == generation && progress.parent != null)
+                    if ((index + 1) % 5 == 0 || index == photos.lastIndex) runOnUiThread {
+                        if (request == generation && progress.parent != null) {
+                            progressBar.progress = index + 1
                             progress.text = "Metadata lezen… $"+"{index + 1} / $"+"{photos.size}"
+                        }
                     }
                 }
                 val result = when (mode) {
@@ -1815,6 +1867,7 @@ class MainActivity : ComponentActivity() {
                         ordered = result
                         draw(ordered, mode)
                         progress.visibility = View.GONE
+                        progressBar.visibility = View.GONE
                     }
                 }
             }
