@@ -8,6 +8,7 @@ on:
       - feature/MediaVerkenner-standalone-datumzoekfunctie-2026-10-30
       - feature/MediaVerkenner-metadata-zoekvenster-voortgang-annuleren-2026-10-30
       - fix/MediaVerkenner-kaart-gps-voortgang-2026-10-30
+      - feature/MediaVerkenner-jaar-maand-dag-velden-2026-10-30
       - restore/fotoverkenner-backup-test-2026-10-29
       - test/fotoverkenner-video-vanaf-werkende-gps-2026-10-29
       - test/mediaverkenner-video-gps-metadata-2026-10-29
