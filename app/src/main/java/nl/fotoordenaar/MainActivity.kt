@@ -1592,6 +1592,53 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private data class GalleryInfo(val date: Date?, val place: String?)
+    private val galleryInfoCache = java.util.concurrent.ConcurrentHashMap<String, GalleryInfo>()
+    private val galleryInfoWorker = Executors.newSingleThreadExecutor()
+
+    private fun galleryInfo(entry: ExplorerEntry, withPlace: Boolean): GalleryInfo {
+        val key = entry.uri.toString()
+        val cached = galleryInfoCache[key]
+        if (cached != null && (!withPlace || cached.place != null)) return cached
+        val date = cached?.date ?: try {
+            if (isVideoEntry(entry)) videoMetadata(entry.uri).first
+            else captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
+        } catch (_: Exception) { null }
+        var place = cached?.place
+        if (withPlace && place == null) {
+            place = try {
+                val coords = if (isVideoEntry(entry)) videoMetadata(entry.uri).second
+                    else cachedGpsCoordinates(entry.name)
+                        ?: gpsCoordinates(readExif(entry.uri))
+                        ?: alternateGpsCoordinates(entry.uri)
+                        ?: xmpGpsCoordinates(entry.uri)
+                if (coords == null) "Onbekende locatie" else {
+                    val geocoder = Geocoder(this, Locale("nl", "NL"))
+                    val addresses: List<Address> = if (Build.VERSION.SDK_INT >= 33) {
+                        var found: List<Address> = emptyList()
+                        val latch = CountDownLatch(1)
+                        geocoder.getFromLocation(coords[0], coords[1], 1) {
+                            found = it ?: emptyList()
+                            latch.countDown()
+                        }
+                        latch.await(5, TimeUnit.SECONDS)
+                        found
+                    } else {
+                        @Suppress("DEPRECATION")
+                        geocoder.getFromLocation(coords[0], coords[1], 1) ?: emptyList()
+                    }
+                    val address = addresses.firstOrNull()
+                    if (address == null) "Onbekende locatie" else {
+                        val gemeente = address.subAdminArea ?: address.locality ?: "Onbekende gemeente"
+                        val plaats = address.locality ?: address.subLocality ?: "Onbekende plaats"
+                        if (gemeente.equals(plaats, ignoreCase = true)) plaats else "$"+"{gemeente} - $"+"{plaats}"
+                    }
+                }
+            } catch (_: Exception) { "Onbekende locatie" }
+        }
+        return GalleryInfo(date, place).also { galleryInfoCache[key] = it }
+    }
+
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
         val density = resources.displayMetrics.density
         val screenWidthPx = resources.displayMetrics.widthPixels
@@ -1603,31 +1650,86 @@ class MainActivity : ComponentActivity() {
             screenWidthDp >= 600 -> 4
             else -> 3
         }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = false
-        }
+        val scroll = ScrollView(this)
         val grid = GridLayout(this).apply {
             columnCount = columns
             useDefaultMargins = false
             setPadding(4, 4, 4, 4)
             alignmentMode = GridLayout.ALIGN_BOUNDS
         }
-        scroll.addView(grid, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        if (photos.isEmpty()) {
-            grid.addView(TextView(this).apply {
-                text = "Geen media in deze map of onderliggende mappen gevonden."
-                textSize = 14f
-                setPadding(12, 12, 12, 12)
+        scroll.addView(grid, ViewGroup.LayoutParams(-1, -2))
+        val galleryBody = FrameLayout(this).apply {
+            addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        }
+        val mapBody = FrameLayout(this)
+        val mapToggle = CheckBox(this).apply {
+            text = "Kaartweergave (alle GPS-spelden)"
+            setPadding(12, 2, 12, 2)
+        }
+        val dateChoice = CheckBox(this).apply { text = "Datum"; isChecked = false }
+        val placeChoice = CheckBox(this).apply { text = "Gemeente - Plaats"; isChecked = false }
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Sorteren:"
+                gravity = Gravity.CENTER_VERTICAL
             })
-        } else {
-            // Houd de kolommen compact in landscape; gebruik de volledige schermbreedte.
-            val horizontalPaddingPx = (8 * density).toInt()
-            val availableWidthPx = (screenWidthPx - horizontalPaddingPx).coerceAtLeast(1)
-            val cellWidthPx = availableWidthPx / columns
-            for (photo in photos) {
+            addView(dateChoice)
+            addView(placeChoice)
+        }
+        val progress = TextView(this).apply {
+            text = "Opnamedatums lezen…"
+            setPadding(12, 4, 12, 4)
+        }
+        val galleryPage = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(choices, LinearLayout.LayoutParams(-1, -2))
+            addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
+            addView(progress, LinearLayout.LayoutParams(-1, -2))
+            addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+        val holder = loading.parent as? ViewGroup
+        holder?.let {
+            val index = it.indexOfChild(loading)
+            it.removeView(loading)
+            it.addView(galleryPage, index, ViewGroup.LayoutParams(-1, -1))
+        }
+        var ordered = photos
+        var generation = 0
+        fun draw(entries: List<ExplorerEntry>, groupMode: Int) {
+            grid.removeAllViews()
+            if (entries.isEmpty()) {
+                grid.addView(TextView(this).apply {
+                    text = "Geen media gevonden."
+                    setPadding(12, 12, 12, 12)
+                })
+                return
+            }
+            val cellWidthPx = (screenWidthPx - (8 * density).toInt()).coerceAtLeast(1) / columns
+            var lastGroup: String? = null
+            for (photo in entries) {
+                val info = galleryInfoCache[photo.uri.toString()]
+                val group = when (groupMode) {
+                    1 -> info?.date?.let {
+                        SimpleDateFormat("dd MMMM yyyy", Locale("nl", "NL")).format(it)
+                    } ?: "Datum onbekend"
+                    2 -> info?.place ?: "Onbekende locatie"
+                    else -> ""
+                }
+                if (groupMode != 0 && group != lastGroup) {
+                    grid.addView(TextView(this).apply {
+                        text = group
+                        textSize = 17f
+                        setTextColor(Color.rgb(15, 69, 122))
+                        setPadding(12, 16, 8, 8)
+                        setBackgroundColor(Color.rgb(235, 239, 243))
+                        layoutParams = GridLayout.LayoutParams().apply {
+                            width = screenWidthPx - (8 * density).toInt()
+                            columnSpec = GridLayout.spec(0, columns)
+                        }
+                    })
+                    lastGroup = group
+                }
                 val tile = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
@@ -1645,7 +1747,7 @@ class MainActivity : ComponentActivity() {
                         cellWidthPx - (8 * density).toInt()
                     )
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo), fromGallery = true) }
+                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, ordered, ordered.indexOf(photo), fromGallery = true) }
                 }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
@@ -1680,17 +1782,50 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        val galleryBody = FrameLayout(this)
-        galleryBody.addView(scroll, FrameLayout.LayoutParams(-1, -1))
-        val mapBody = FrameLayout(this)
-        val mapToggle = CheckBox(this).apply {
-            text = "Kaartweergave (alle GPS-spelden)"
-            setPadding(12, 2, 12, 2)
+        fun reload() {
+            generation++
+            val request = generation
+            val mode = when {
+                dateChoice.isChecked -> 1
+                placeChoice.isChecked -> 2
+                else -> 0
+            }
+            progress.visibility = View.VISIBLE
+            progress.text = if (mode == 2) "GPS-locaties en opnamedatums lezen…" else "Opnamedatums lezen…"
+            galleryInfoWorker.execute {
+                photos.forEachIndexed { index, photo ->
+                    galleryInfo(photo, mode == 2)
+                    if (index % 10 == 0 || index == photos.lastIndex) runOnUiThread {
+                        if (request == generation && progress.parent != null)
+                            progress.text = "Metadata lezen… $"+"{index + 1} / $"+"{photos.size}"
+                    }
+                }
+                val result = when (mode) {
+                    2 -> photos.sortedWith(compareBy<ExplorerEntry> {
+                        galleryInfoCache[it.uri.toString()]?.place ?: "Onbekende locatie"
+                    }.thenByDescending {
+                        galleryInfoCache[it.uri.toString()]?.date?.time ?: Long.MIN_VALUE
+                    })
+                    else -> photos.sortedWith(compareByDescending<ExplorerEntry> {
+                        galleryInfoCache[it.uri.toString()]?.date?.time ?: Long.MIN_VALUE
+                    }.thenBy { it.name.lowercase(Locale.ROOT) })
+                }
+                runOnUiThread {
+                    if (request == generation && progress.parent != null) {
+                        ordered = result
+                        draw(ordered, mode)
+                        progress.visibility = View.GONE
+                    }
+                }
+            }
         }
-        val galleryPage = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
-            addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        dateChoice.setOnCheckedChangeListener { _, checked ->
+            if (checked) placeChoice.isChecked = false
+            reload()
+        }
+        placeChoice.setOnCheckedChangeListener { _, checked ->
+            if (checked) dateChoice.isChecked = false
+            reload()
         }
         var mapStarted = false
         mapToggle.setOnCheckedChangeListener { _, checked ->
@@ -1705,8 +1840,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else mapBody.visibility = View.GONE
         }
-        val holder = loading.parent as? ViewGroup
-        holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(galleryPage, index, ViewGroup.LayoutParams(-1,-1)) }
+        reload()
     }
 
     private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
