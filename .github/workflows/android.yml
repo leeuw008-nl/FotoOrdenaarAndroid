@@ -14,6 +14,7 @@ on:
       - feature/MediaVerkenner-drie-knoppen-terug-navigatie-2026-10-30
       - feature/MediaVerkenner-gallery-sortering-metadata-2026-10-30
       - fix/MediaVerkenner-gallery-snel-cache-voortgang-2026-10-30
+      - fix/MediaVerkenner-locatie-voortgang-resultaat-2026-10-30
       - restore/fotoverkenner-backup-test-2026-10-29
       - test/fotoverkenner-video-vanaf-werkende-gps-2026-10-29
       - test/mediaverkenner-video-gps-metadata-2026-10-29
