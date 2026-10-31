@@ -1733,7 +1733,7 @@ class MediaViewerActivity : ComponentActivity() {
         val placeChoice = CheckBox(this).apply { text = "Gemeente - Plaats"; isChecked = false }
         val choices = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(TextView(this@MainActivity).apply {
+            addView(TextView(this@MediaViewerActivity).apply {
                 text = "Sorteren:"
                 gravity = Gravity.CENTER_VERTICAL
             })
@@ -2068,7 +2068,7 @@ class MediaViewerActivity : ComponentActivity() {
                 setSingleLine(true)
                 threshold = 0
                 inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                setAdapter(android.widget.ArrayAdapter(this@MainActivity,
+                setAdapter(android.widget.ArrayAdapter(this@MediaViewerActivity,
                     android.R.layout.simple_dropdown_item_1line, values))
             }
             row.addView(field, LinearLayout.LayoutParams(0, -2, 2f))
