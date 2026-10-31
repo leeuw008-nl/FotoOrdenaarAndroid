@@ -250,7 +250,8 @@ class MediaViewerActivity : ComponentActivity() {
         val uri: Uri,
         val name: String,
         val isDirectory: Boolean,
-        val sizeBytes: Long?
+        val sizeBytes: Long?,
+        val modifiedAt: Long? = null
     )
 
     private fun explorerEntries(parent: Uri): List<ExplorerEntry> {
@@ -266,7 +267,8 @@ class MediaViewerActivity : ComponentActivity() {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
-                DocumentsContract.Document.COLUMN_SIZE
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED
             ),
             null, null,
             "${DocumentsContract.Document.COLUMN_DISPLAY_NAME} COLLATE NOCASE ASC"
@@ -275,6 +277,7 @@ class MediaViewerActivity : ComponentActivity() {
             val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
             val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+            val modifiedCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
             while (cursor.moveToNext()) {
                 val childId = cursor.getString(idCol) ?: continue
                 val name = cursor.getString(nameCol) ?: "(naamloos)"
@@ -283,7 +286,8 @@ class MediaViewerActivity : ComponentActivity() {
                     DocumentsContract.buildDocumentUriUsingTree(parentDoc, childId),
                     name,
                     mime == DocumentsContract.Document.MIME_TYPE_DIR,
-                    if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null
+                    if (sizeCol >= 0 && !cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else null,
+                    if (modifiedCol >= 0 && !cursor.isNull(modifiedCol)) cursor.getLong(modifiedCol).takeIf { it > 0L } else null
                 )
             }
         }
@@ -441,7 +445,22 @@ class MediaViewerActivity : ComponentActivity() {
     }
 
     private fun closeFullScreen() {
+        // Bewaar de herkomst op de schermstapel: Gallery -> media -> Gallery,
+        // zoekresultaten -> media -> zoekresultaten, album -> media -> album.
+        // Stop een eventueel nog spelende video voordat het scherm verdwijnt.
+        val current = screenStack.lastOrNull()
+        fun stopVideo(view: View?) {
+            when (view) {
+                is VideoView -> {
+                    try { view.stopPlayback() } catch (_: Exception) {}
+                }
+                is ViewGroup -> for (i in 0 until view.childCount) stopVideo(view.getChildAt(i))
+            }
+        }
+        stopVideo(current)
         if (screenStack.isNotEmpty()) screenStack.removeAt(screenStack.lastIndex)
+        // Fullscreen-videomodus mag niet doorwerken op het vorige scherm.
+        window.decorView.systemUiVisibility = 0
         val previous = screenStack.lastOrNull() ?: homeView
         if (previous != null) setContentView(previous)
         if (screenStack.isEmpty()) explorerOpen = false
@@ -625,10 +644,12 @@ class MediaViewerActivity : ComponentActivity() {
         }
         var fullscreen = false
         var videoToolbar: LinearLayout? = null
+        var fullscreenNavigation: LinearLayout? = null
         fun updateVideoLayout() {
             tabs.visibility = if (fullscreen) View.GONE else View.VISIBLE
             tabBody.visibility = if (fullscreen) View.GONE else View.VISIBLE
             navigationBar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
+            fullscreenNavigation?.visibility = if (fullscreen) View.VISIBLE else View.GONE
             videoToolbar?.visibility = if (fullscreen) View.GONE else View.VISIBLE
             window.decorView.systemUiVisibility = if (fullscreen)
                 (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
@@ -702,7 +723,9 @@ class MediaViewerActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(0, -2, 1f))
             navOverlay.addView(next)
             videoFrame.addView(navOverlay, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-            videoFrame.setOnClickListener { navOverlay.visibility = if (navOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+            fullscreenNavigation = navOverlay
+            // De knoppen blijven zichtbaar tijdens het afspelen, ook als VideoView aanrakingen opvangt.
+            navOverlay.visibility = if (fullscreen) View.VISIBLE else View.GONE
         }
         fullscreenButton.setOnClickListener {
             fullscreen = !fullscreen
@@ -1483,7 +1506,9 @@ class MediaViewerActivity : ComponentActivity() {
         }
         holder.addView(status)
         // Apart van het renderen van foto's: de bestaande GPS-methoden blijven ongewijzigd.
-        albumMapWorker.execute {
+        val gpsScanWorker = Executors.newSingleThreadExecutor()
+        gpsScanWorker.execute {
+            try {
             val pins = mutableListOf<Triple<Int, Double, Double>>()
             photos.forEachIndexed { index, photo ->
                 val coords = try {
@@ -1503,7 +1528,7 @@ class MediaViewerActivity : ComponentActivity() {
                     (coords[0] != 0.0 || coords[1] != 0.0)) {
                     pins.add(Triple(index, coords[0], coords[1]))
                 }
-                if ((index + 1) % 20 == 0 || index == photos.lastIndex) {
+                if ((index + 1) % 5 == 0 || index == photos.lastIndex) {
                     runOnUiThread {
                         if (status.parent != null) status.text =
                             "GPS-locaties zoeken… ${index + 1} / ${photos.size}"
@@ -1564,7 +1589,117 @@ class MediaViewerActivity : ComponentActivity() {
                 }
                 holder.addView(web, FrameLayout.LayoutParams(-1, -1))
             }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (status.parent != null) status.text =
+                        "GPS-locaties zoeken mislukt: " + (error.message ?: error.javaClass.simpleName)
+                }
+            } finally {
+                gpsScanWorker.shutdown()
+            }
         }
+    }
+
+    private data class GalleryInfo(val date: Date?, val place: String?, val dateScanned: Boolean = false, val placeScanned: Boolean = false)
+    private val galleryInfoCache = java.util.concurrent.ConcurrentHashMap<String, GalleryInfo>()
+    private val galleryInfoWorker = Executors.newSingleThreadExecutor()
+
+    private val galleryMetadataPrefs by lazy {
+        getSharedPreferences("media_verkenner_gallery_metadata_v1", MODE_PRIVATE)
+    }
+    private fun galleryInfo(entry: ExplorerEntry, withPlace: Boolean): GalleryInfo {
+        val key = entry.uri.toString()
+        val signature = "${entry.sizeBytes ?: -1}:${entry.modifiedAt ?: -1}"
+        var cached = galleryInfoCache[key]
+        if (cached == null) {
+            val saved = galleryMetadataPrefs.getString(key, null)
+            if (saved != null) try {
+                val obj = org.json.JSONObject(saved)
+                if (obj.optString("signature") == signature) {
+                    cached = GalleryInfo(
+                        if (obj.has("date") && !obj.isNull("date")) Date(obj.getLong("date")) else null,
+                        if (obj.has("place")) obj.optString("place") else null,
+                        obj.optBoolean("dateScanned", false),
+                        obj.optBoolean("placeScanned", false)
+                    )
+                    galleryInfoCache[key] = cached
+                    if ((withPlace && cached.placeScanned) || (!withPlace && cached.dateScanned)) return cached
+                }
+            } catch (_: Exception) {}
+        }
+        val date = if (withPlace || cached?.dateScanned == true) cached?.date else try {
+            if (isVideoEntry(entry)) videoMetadata(entry.uri).first
+            else captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
+        } catch (_: Exception) { null }
+        var place = cached?.place
+        if (withPlace && cached?.placeScanned != true) {
+            place = try {
+                val coords = if (isVideoEntry(entry)) videoMetadata(entry.uri).second
+                    else cachedGpsCoordinates(entry.name)
+                        ?: gpsCoordinates(readExif(entry.uri))
+                        ?: alternateGpsCoordinates(entry.uri)
+                        ?: xmpGpsCoordinates(entry.uri)
+                if (coords == null) "Onbekende locatie" else {
+                    val geocoder = Geocoder(this, Locale("nl", "NL"))
+                    val addresses: List<Address> = if (Build.VERSION.SDK_INT >= 33) {
+                        var found: List<Address> = emptyList()
+                        val latch = CountDownLatch(1)
+                        geocoder.getFromLocation(coords[0], coords[1], 1) {
+                            found = it ?: emptyList()
+                            latch.countDown()
+                        }
+                        latch.await(5, TimeUnit.SECONDS)
+                        found
+                    } else {
+                        @Suppress("DEPRECATION")
+                        geocoder.getFromLocation(coords[0], coords[1], 1) ?: emptyList()
+                    }
+                    val address = addresses.firstOrNull()
+                    if (address == null) "Onbekende locatie" else {
+                        val gemeente = address.subAdminArea ?: address.locality ?: "Onbekende gemeente"
+                        val plaats = address.locality ?: address.subLocality ?: "Onbekende plaats"
+                        "${gemeente} - ${plaats}"
+                    }
+                }
+            } catch (_: Exception) { "Onbekende locatie" }
+        }
+        val result = GalleryInfo(date, place, cached?.dateScanned == true || !withPlace, cached?.placeScanned == true || withPlace)
+        galleryInfoCache[key] = result
+        val obj = org.json.JSONObject().apply {
+            put("signature", signature)
+            put("date", date?.time ?: org.json.JSONObject.NULL)
+            if (place != null) put("place", place)
+            put("dateScanned", result.dateScanned)
+            put("placeScanned", result.placeScanned)
+        }
+        galleryMetadataPrefs.edit().putString(key, obj.toString()).apply()
+        return result
+    }
+
+    private fun fileModifiedTime(entry: ExplorerEntry): Long {
+        entry.modifiedAt?.takeIf { it > 0L }?.let { return it }
+        // Sommige SAF-providers leveren de datum niet bij de maplijst.
+        // Probeer dan het individuele document en daarna de MediaStore-index.
+        try {
+            contentResolver.query(entry.uri,
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val value = cursor.getLong(0)
+                    if (value > 0L) return value
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            val mediaUri = if (isVideoEntry(entry)) originalVideoMediaUri(entry.uri) else originalMediaUri(entry.uri)
+            contentResolver.query(mediaUri,
+                arrayOf(MediaStore.MediaColumns.DATE_MODIFIED), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                    val seconds = cursor.getLong(0)
+                    if (seconds > 0L) return seconds * 1000L
+                }
+            }
+        } catch (_: Exception) {}
+        return Long.MIN_VALUE
     }
 
     private fun renderPhotoGrid(photos: List<ExplorerEntry>, loading: TextView) {
@@ -1578,31 +1713,93 @@ class MediaViewerActivity : ComponentActivity() {
             screenWidthDp >= 600 -> 4
             else -> 3
         }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = false
-        }
+        val scroll = ScrollView(this)
         val grid = GridLayout(this).apply {
             columnCount = columns
             useDefaultMargins = false
             setPadding(4, 4, 4, 4)
             alignmentMode = GridLayout.ALIGN_BOUNDS
         }
-        scroll.addView(grid, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        if (photos.isEmpty()) {
-            grid.addView(TextView(this).apply {
-                text = "Geen media in deze map of onderliggende mappen gevonden."
-                textSize = 14f
-                setPadding(12, 12, 12, 12)
+        scroll.addView(grid, ViewGroup.LayoutParams(-1, -2))
+        val galleryBody = FrameLayout(this).apply {
+            addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        }
+        val mapBody = FrameLayout(this)
+        val mapToggle = CheckBox(this).apply {
+            text = "Kaartweergave (alle GPS-spelden)"
+            setPadding(12, 2, 12, 2)
+        }
+        val dateChoice = CheckBox(this).apply { text = "Datum"; isChecked = false }
+        val placeChoice = CheckBox(this).apply { text = "Gemeente - Plaats"; isChecked = false }
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Sorteren:"
+                gravity = Gravity.CENTER_VERTICAL
             })
-        } else {
-            // Houd de kolommen compact in landscape; gebruik de volledige schermbreedte.
-            val horizontalPaddingPx = (8 * density).toInt()
-            val availableWidthPx = (screenWidthPx - horizontalPaddingPx).coerceAtLeast(1)
-            val cellWidthPx = availableWidthPx / columns
-            for (photo in photos) {
+            addView(dateChoice)
+            addView(placeChoice)
+        }
+        val progress = TextView(this).apply {
+            text = ""
+            visibility = View.GONE
+            setPadding(12, 4, 12, 4)
+        }
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = photos.size.coerceAtLeast(1)
+            visibility = View.GONE
+        }
+        val galleryPage = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(choices, LinearLayout.LayoutParams(-1, -2))
+            addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
+            addView(progress, LinearLayout.LayoutParams(-1, -2))
+            addView(progressBar, LinearLayout.LayoutParams(-1, -2))
+            addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+        val holder = loading.parent as? ViewGroup
+        holder?.let {
+            val index = it.indexOfChild(loading)
+            it.removeView(loading)
+            it.addView(galleryPage, index, ViewGroup.LayoutParams(-1, -1))
+        }
+        var ordered = photos
+        var generation = 0
+        val fileDates = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        fun draw(entries: List<ExplorerEntry>, groupMode: Int) {
+            grid.removeAllViews()
+            if (entries.isEmpty()) {
+                grid.addView(TextView(this).apply {
+                    text = "Geen media gevonden."
+                    setPadding(12, 12, 12, 12)
+                })
+                return
+            }
+            val cellWidthPx = (screenWidthPx - (8 * density).toInt()).coerceAtLeast(1) / columns
+            var lastGroup: String? = null
+            for (photo in entries) {
+                val info = galleryInfoCache[photo.uri.toString()]
+                val group = when (groupMode) {
+                    1 -> info?.date?.let {
+                        SimpleDateFormat("dd MMMM yyyy", Locale("nl", "NL")).format(it)
+                    } ?: "Datum onbekend"
+                    2 -> info?.place ?: "Onbekende locatie"
+                    else -> ""
+                }
+                if (groupMode != 0 && group != lastGroup) {
+                    grid.addView(TextView(this).apply {
+                        text = group
+                        textSize = 17f
+                        setTextColor(Color.rgb(15, 69, 122))
+                        setPadding(12, 16, 8, 8)
+                        setBackgroundColor(Color.rgb(235, 239, 243))
+                        layoutParams = GridLayout.LayoutParams().apply {
+                            width = screenWidthPx - (8 * density).toInt()
+                            columnSpec = GridLayout.spec(0, columns)
+                        }
+                    })
+                    lastGroup = group
+                }
                 val tile = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
@@ -1620,7 +1817,7 @@ class MediaViewerActivity : ComponentActivity() {
                         cellWidthPx - (8 * density).toInt()
                     )
                     contentDescription = photo.name
-                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, photos, photos.indexOf(photo), fromGallery = true) }
+                    setOnClickListener { showFullscreenPhoto(photo.uri, photo.name, ordered, ordered.indexOf(photo), fromGallery = true) }
                 }
                 tile.addView(thumb)
                 tile.addView(TextView(this).apply {
@@ -1655,17 +1852,109 @@ class MediaViewerActivity : ComponentActivity() {
                 }
             }
         }
-        val galleryBody = FrameLayout(this)
-        galleryBody.addView(scroll, FrameLayout.LayoutParams(-1, -1))
-        val mapBody = FrameLayout(this)
-        val mapToggle = CheckBox(this).apply {
-            text = "Kaartweergave (alle GPS-spelden)"
-            setPadding(12, 2, 12, 2)
+        fun reload() {
+            generation++
+            val request = generation
+            val mode = when {
+                dateChoice.isChecked -> 1
+                placeChoice.isChecked -> 2
+                else -> 0
+            }
+            if (mode == 0) {
+                progress.visibility = View.GONE
+                progressBar.visibility = View.GONE
+                // Toon de reeds bekende bestandsdatums meteen; vul ontbrekende
+                // SAF-datums daarna aan zonder EXIF of videometadata te openen.
+                ordered = photos.sortedWith(compareByDescending<ExplorerEntry> {
+                    it.modifiedAt ?: fileDates[it.uri.toString()] ?: Long.MIN_VALUE
+                }.thenBy { it.name.lowercase(Locale.ROOT) })
+                draw(ordered, 0)
+                if (photos.any { it.modifiedAt == null && !fileDates.containsKey(it.uri.toString()) }) {
+                    galleryInfoWorker.execute {
+                        photos.forEach { photo ->
+                            if (request != generation) return@execute
+                            if (photo.modifiedAt == null && !fileDates.containsKey(photo.uri.toString()))
+                                fileDates[photo.uri.toString()] = fileModifiedTime(photo)
+                        }
+                        runOnUiThread {
+                            if (request == generation && progress.parent != null) {
+                                ordered = photos.sortedWith(compareByDescending<ExplorerEntry> {
+                                    it.modifiedAt ?: fileDates[it.uri.toString()] ?: Long.MIN_VALUE
+                                }.thenBy { it.name.lowercase(Locale.ROOT) })
+                                draw(ordered, 0)
+                            }
+                        }
+                    }
+                }
+                return
+            }
+            progress.visibility = View.VISIBLE
+            progressBar.visibility = View.VISIBLE
+            progressBar.max = photos.size.coerceAtLeast(1)
+            progressBar.progress = 0
+            progress.text = "Metadata lezen… 0 / ${photos.size}"
+            galleryInfoWorker.execute {
+                photos.forEachIndexed { index, photo ->
+                    // Een nieuwe keuze onderbreekt de oude scan tussen bestanden.
+                    if (request != generation) return@execute
+                    if (index == 0 || index % 5 == 0) runOnUiThread {
+                        if (request == generation && progress.parent != null)
+                            progress.text = "Bestand ${index + 1} / ${photos.size} wordt onderzocht…"
+                    }
+                    try {
+                        galleryInfo(photo, mode == 2)
+                    } catch (_: Exception) {
+                        // Een onleesbaar bestand mag de volledige scan niet afbreken.
+                        galleryInfoCache[photo.uri.toString()] = GalleryInfo(null, "Onbekende locatie", mode == 1, mode == 2)
+                    }
+                    if (index % 1 == 0) runOnUiThread {
+                        if (request == generation && progress.parent != null) {
+                            progressBar.progress = index + 1
+                            progress.text = "Metadata lezen… ${index + 1} / ${photos.size}"
+                        }
+                    }
+                }
+                val result = when (mode) {
+                    2 -> photos.sortedWith(compareBy<ExplorerEntry> {
+                        galleryInfoCache[it.uri.toString()]?.place ?: "Onbekende locatie"
+                    }.thenByDescending {
+                        galleryInfoCache[it.uri.toString()]?.date?.time ?: Long.MIN_VALUE
+                    })
+                    else -> photos.sortedWith(compareByDescending<ExplorerEntry> {
+                        galleryInfoCache[it.uri.toString()]?.date?.time ?: Long.MIN_VALUE
+                    }.thenBy { it.name.lowercase(Locale.ROOT) })
+                }
+                runOnUiThread {
+                    if (request == generation && progress.parent != null) {
+                        ordered = result
+                        draw(ordered, mode)
+                        progress.visibility = View.GONE
+                        progressBar.visibility = View.GONE
+                    }
+                }
+            }
         }
-        val galleryPage = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(mapToggle, LinearLayout.LayoutParams(-1, -2))
-            addView(galleryBody, LinearLayout.LayoutParams(-1, 0, 1f))
+        dateChoice.setOnCheckedChangeListener { _, checked ->
+            if (checked && placeChoice.isChecked) {
+                placeChoice.setOnCheckedChangeListener(null)
+                placeChoice.isChecked = false
+                placeChoice.setOnCheckedChangeListener { _, selected ->
+                    if (selected && dateChoice.isChecked) dateChoice.isChecked = false
+                    reload()
+                }
+            }
+            reload()
+        }
+        placeChoice.setOnCheckedChangeListener { _, checked ->
+            if (checked && dateChoice.isChecked) {
+                dateChoice.setOnCheckedChangeListener(null)
+                dateChoice.isChecked = false
+                dateChoice.setOnCheckedChangeListener { _, selected ->
+                    if (selected && placeChoice.isChecked) placeChoice.isChecked = false
+                    reload()
+                }
+            }
+            reload()
         }
         var mapStarted = false
         mapToggle.setOnCheckedChangeListener { _, checked ->
@@ -1680,8 +1969,7 @@ class MediaViewerActivity : ComponentActivity() {
                 }
             } else mapBody.visibility = View.GONE
         }
-        val holder = loading.parent as? ViewGroup
-        holder?.let { val index = it.indexOfChild(loading); it.removeView(loading); it.addView(galleryPage, index, ViewGroup.LayoutParams(-1,-1)) }
+        reload()
     }
 
     private fun showPhotoFromFolder(uri: Uri, name: String, folderUri: Uri) {
@@ -1729,6 +2017,189 @@ class MediaViewerActivity : ComponentActivity() {
         }
     }
 
+
+    // Opnamedatum uit foto-EXIF of video-metadata; geen bestandsnaam-datum.
+    private fun searchRecordingDate(entry: ExplorerEntry): String? {
+        if (isVideoEntry(entry)) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                contentResolver.openFileDescriptor(entry.uri, "r")?.use { fd ->
+                    retriever.setDataSource(fd.fileDescriptor)
+                    val raw = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+                    if (raw != null) {
+                        val compact = Regex("^(\\d{4})(\\d{2})(\\d{2})").find(raw)
+                        if (compact != null) return compact.groupValues[1] + "-" +
+                            compact.groupValues[2] + "-" + compact.groupValues[3]
+                        val dashed = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(raw)
+                        if (dashed != null) return dashed.groupValues[1]
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+            return null
+        }
+        val date = captureDate(readExif(entry.uri)) ?: alternateCaptureDate(entry.uri)
+        return date?.let { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(it) }
+    }
+
+
+    private val metadataSearchWorker = Executors.newSingleThreadExecutor()
+    private fun showMetadataSearchWindow(rootUri: Uri) {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,12,24,12) }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this).apply { text = "Zoek in Metadata"; textSize = 20f },
+            LinearLayout.LayoutParams(0,-2,1f))
+        val close = Button(this).apply { text = "✕" }
+        header.addView(close)
+        layout.addView(header)
+        // Bewerkbare keuzelijsten: zelf typen of via het pijltje kiezen.
+        fun dateField(label: String, values: List<String>): android.widget.AutoCompleteTextView {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply { text = label; textSize = 16f },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            val field = android.widget.AutoCompleteTextView(this).apply {
+                hint = "Alle"
+                setSingleLine(true)
+                threshold = 0
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                setAdapter(android.widget.ArrayAdapter(this@MainActivity,
+                    android.R.layout.simple_dropdown_item_1line, values))
+            }
+            row.addView(field, LinearLayout.LayoutParams(0, -2, 2f))
+            row.addView(Button(this).apply {
+                text = "▾"
+                contentDescription = "$label kiezen"
+                setOnClickListener { field.showDropDown() }
+            })
+            layout.addView(row)
+            return field
+        }
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val yearField = dateField("Jaar", (currentYear downTo 1900).map { it.toString() })
+        val monthField = dateField("Maand", (1..12).map { "%02d".format(Locale.US, it) })
+        val dayField = dateField("Dag", (1..31).map { "%02d".format(Locale.US, it) })
+        layout.addView(TextView(this).apply {
+            text = "Laat een veld leeg om alle waarden toe te staan."
+        })
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        layout.addView(progress, LinearLayout.LayoutParams(-1,-2))
+        val label = TextView(this).apply { text = "Kies een zoekoptie."; setPadding(0,10,0,10) }
+        layout.addView(label)
+        val start = Button(this).apply { text = "Zoeken" }
+        layout.addView(start)
+        val dialog = AlertDialog.Builder(this).setView(layout).create()
+        close.setOnClickListener { cancelled.set(true); dialog.dismiss() }
+        dialog.setOnDismissListener { cancelled.set(true) }
+        start.setOnClickListener {
+            val year = yearField.text.toString().trim()
+            val month = monthField.text.toString().trim()
+            val day = dayField.text.toString().trim()
+            val y = year.toIntOrNull()
+            val m = month.toIntOrNull()
+            val d = day.toIntOrNull()
+            if (year.isEmpty() && month.isEmpty() && day.isEmpty()) {
+                yearField.error = "Vul minimaal één veld in"
+                return@setOnClickListener
+            }
+            if ((year.isNotEmpty() && (year.length != 4 || y == null || y !in 1..9999)) ||
+                (month.isNotEmpty() && (m == null || m !in 1..12)) ||
+                (day.isNotEmpty() && (d == null || d !in 1..31))) {
+                yearField.error = "Controleer jaar, maand en dag"
+                return@setOnClickListener
+            }
+            if (y != null && m != null && d != null) {
+                val validDate = try {
+                    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+                        .parse("%04d-%02d-%02d".format(Locale.US, y, m, d)) != null
+                } catch (_: Exception) { false }
+                if (!validDate) { dayField.error = "Ongeldige kalenderdatum"; return@setOnClickListener }
+            }
+            val value = listOf(
+                year.ifEmpty { "*" },
+                if (m == null) "*" else "%02d".format(Locale.US, m),
+                if (d == null) "*" else "%02d".format(Locale.US, d)
+            ).joinToString("-")
+            start.isEnabled = false
+            yearField.isEnabled = false
+            monthField.isEnabled = false
+            dayField.isEnabled = false
+            progress.isIndeterminate = true
+            label.text = "Mediabestanden inventariseren…"
+            metadataSearchWorker.execute {
+                val pending = java.util.ArrayDeque<Uri>()
+                val visited = HashSet<String>()
+                val media = mutableListOf<ExplorerEntry>()
+                pending.add(rootUri)
+                while (!pending.isEmpty() && !cancelled.get()) {
+                    val uri = pending.removeLast()
+                    if (!visited.add(uri.toString())) continue
+                    val entries = try { explorerEntries(uri) } catch (_: Exception) { emptyList() }
+                    for (entry in entries) {
+                        if (cancelled.get()) break
+                        if (entry.isDirectory) pending.add(entry.uri)
+                        else if (isImageEntry(entry)) media.add(entry)
+                    }
+                    if (visited.size % 10 == 0) {
+                        val folders = visited.size
+                        val files = media.size
+                        runOnUiThread {
+                            if (!cancelled.get()) label.text = "Inventariseren: $folders mappen, $files bestanden"
+                        }
+                    }
+                }
+                if (cancelled.get()) return@execute
+                runOnUiThread {
+                    if (!cancelled.get()) {
+                        progress.isIndeterminate = false
+                        progress.max = media.size.coerceAtLeast(1)
+                        progress.progress = 0
+                    }
+                }
+                val matches = mutableListOf<ExplorerEntry>()
+                for ((index, entry) in media.withIndex()) {
+                    if (cancelled.get()) return@execute
+                    if (searchRecordingDate(entry)?.let { recorded ->
+                        val parts = recorded.split("-")
+                        (y == null || parts.getOrNull(0)?.toIntOrNull() == y) &&
+                        (m == null || parts.getOrNull(1)?.toIntOrNull() == m) &&
+                        (d == null || parts.getOrNull(2)?.toIntOrNull() == d)
+                    } == true) matches.add(entry)
+                    val scanned = index + 1
+                    if (scanned % 5 == 0 || scanned == media.size) {
+                        val found = matches.size
+                        val total = media.size
+                        runOnUiThread {
+                            if (!cancelled.get()) {
+                                progress.progress = scanned
+                                label.text = "$scanned / $total onderzocht · $found gevonden"
+                            }
+                        }
+                    }
+                }
+                if (cancelled.get()) return@execute
+                matches.sortBy { it.name.lowercase(Locale.ROOT) }
+                runOnUiThread {
+                    if (cancelled.get()) return@runOnUiThread
+                    dialog.dismiss()
+                    val loading = TextView(this).apply {
+                        text = if (matches.isEmpty()) "Geen media met opnamedatum $value gevonden."
+                            else "Zoekresultaten"
+                        setPadding(20,20,20,20)
+                    }
+                    openFullScreen("Metadata: $value", loading)
+                    if (matches.isNotEmpty()) renderPhotoGrid(matches, loading)
+                }
+            }
+        }
+        dialog.show()
+    }
+
     private fun showExplorer(organizedOnly: Boolean) {
         val tree = sourceTree ?: run {
             status.text = "Kies eerst een mediamap."
@@ -1749,13 +2220,39 @@ class MediaViewerActivity : ComponentActivity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(currentFolder)
-        val allButton = Button(this).apply { text = "Alles uitklappen" }
-        root.addView(allButton)
+        // Drie gelijkwaardige acties op één rij; de knoppen passen zich aan de schermbreedte aan.
+        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val allButton = Button(this).apply {
+            text = "Alles uitklappen"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+        }
+        actionRow.addView(allButton, LinearLayout.LayoutParams(0, -2, 1f))
+        actionRow.addView(Button(this).apply {
+            text = "Gallery - alle media"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+            contentDescription = "Toon alle foto's en video's uit de Mediamap en onderliggende albums"
+            setOnClickListener { showFolderGallery(rootUri, "Alle media") }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        actionRow.addView(Button(this).apply {
+            text = "Zoek in metadata"
+            textSize = 10f
+            isAllCaps = false
+            setPadding(2, 0, 2, 0)
+            maxLines = 2
+            setOnClickListener { showMetadataSearchWindow(rootUri) }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(actionRow)
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val searchInput = EditText(this).apply { hint = "Zoek op fotonaam"; setSingleLine(true) }
+        val searchInput = EditText(this).apply { hint = "Zoek op medianaam"; setSingleLine(true) }
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
         searchRow.addView(Button(this).apply {
-            text = "Zoeken"
+            text = "Naam zoeken"
             setOnClickListener {
                 val term = searchInput.text.toString().trim()
                 if (term.isBlank()) { searchInput.error = "Zoekterm invullen" }
@@ -1946,7 +2443,6 @@ class MediaViewerActivity : ComponentActivity() {
                             }
                         }
                         label.setOnClickListener {
-                            currentFolder.text = "Huidige map: ${entry.name}"
                             showPhotoFromFolder(entry.uri, entry.name, parent)
                         }
                     }
