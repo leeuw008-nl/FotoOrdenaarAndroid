@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import threading
 import subprocess
 import sys
 import urllib.parse
@@ -125,6 +127,10 @@ class App:
         self.map_widget = None
         self.map_marker = None
         self.tree_paths: dict[str, Path] = {}
+        self.scan_queue = queue.Queue()
+        self.scan_generation = 0
+        self.scan_running = False
+        self.expand_queue = []
         self.build_ui()
 
     def build_ui(self):
@@ -251,26 +257,61 @@ class App:
             self.scan()
 
     def scan(self):
-        if not self.folder or not self.folder.exists():
+        if not self.folder or not self.folder.exists() or self.scan_running:
             return
-        self.status.set("Bestanden en albums inventariseren…")
-        self.root.update_idletasks()
+        self.scan_generation += 1
+        generation = self.scan_generation
+        root_folder = self.folder
+        self.scan_running = True
         self.items = []
-        paths = [
-            path for path in self.folder.rglob("*")
-            if path.is_file() and path.suffix.lower() in MEDIA_EXTS
-        ]
-        for index, path in enumerate(paths, 1):
-            try:
-                self.items.append(inspect_file(path))
-            except (OSError, PermissionError):
-                continue
-            if index % 100 == 0:
-                self.status.set(f"Metadata lezen… {index} van {len(paths)}")
-                self.root.update_idletasks()
+        self.filtered = []
+        self.table.delete(*self.table.get_children())
+        self.status.set("Bestanden inventariseren op de achtergrond…")
         self.build_album_tree()
-        self.filter()
-        self.status.set(f"Gereed: {len(self.items)} foto- en videobestanden gevonden.")
+
+        def worker():
+            found = []
+            checked = 0
+            for current, _dirs, files in os.walk(root_folder, followlinks=False):
+                for filename in files:
+                    path = Path(current) / filename
+                    if path.suffix.lower() not in MEDIA_EXTS:
+                        continue
+                    checked += 1
+                    try:
+                        found.append(inspect_file(path))
+                    except (OSError, PermissionError):
+                        pass
+                    except Exception:
+                        pass
+                    if checked % 100 == 0:
+                        self.scan_queue.put((generation, "progress", checked))
+            self.scan_queue.put((generation, "done", found))
+
+        threading.Thread(target=worker, name="FotoVerkennerScan", daemon=True).start()
+        self.root.after(100, lambda: self.poll_scan(generation))
+
+    def poll_scan(self, generation):
+        if generation != self.scan_generation:
+            return
+        finished = False
+        while True:
+            try:
+                item_generation, kind, payload = self.scan_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item_generation != generation:
+                continue
+            if kind == "progress":
+                self.status.set(f"Metadata lezen op achtergrond… {payload} bestanden verwerkt")
+            elif kind == "done":
+                self.items = payload
+                self.scan_running = False
+                self.filter()
+                self.status.set(f"Gereed: {len(self.items)} foto- en videobestanden gevonden.")
+                finished = True
+        if not finished and self.scan_running:
+            self.root.after(100, lambda: self.poll_scan(generation))
 
     def build_album_tree(self):
         self.album_tree.delete(*self.album_tree.get_children())
@@ -280,38 +321,83 @@ class App:
         root_id = str(self.folder)
         self.tree_paths[root_id] = self.folder
         self.album_tree.insert("", "end", iid=root_id, text=f"📁 {self.folder.name}", open=True)
-        directories = sorted(
-            (path for path in self.folder.rglob("*") if path.is_dir()),
-            key=lambda path: (len(path.parts), str(path).lower())
-        )
-        for directory in directories:
-            parent_id = str(directory.parent)
-            if parent_id not in self.tree_paths:
-                continue
-            directory_id = str(directory)
-            self.tree_paths[directory_id] = directory
-            self.album_tree.insert(parent_id, "end", iid=directory_id, text=f"📁 {directory.name}", open=False)
+        self.add_album_placeholder(root_id, self.folder)
         self.album_tree.selection_set(root_id)
         self.album_tree.focus(root_id)
         self.expand_button.configure(text="Alles uitklappen")
+
+    def add_album_placeholder(self, node_id, path):
+        try:
+            with os.scandir(path) as entries:
+                has_subfolder = any(entry.is_dir(follow_symlinks=False) for entry in entries)
+            if has_subfolder:
+                placeholder = "__lazy__" + node_id
+                self.album_tree.insert(node_id, "end", iid=placeholder, text="…")
+        except (OSError, PermissionError):
+            pass
+
+    def populate_album_node(self, node_id):
+        path = self.tree_paths.get(node_id)
+        if path is None:
+            return
+        children = self.album_tree.get_children(node_id)
+        if children and all(child.startswith("__lazy__") for child in children):
+            self.album_tree.delete(*children)
+        elif children:
+            return
+        try:
+            directories = []
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            directories.append(Path(entry.path))
+                    except OSError:
+                        continue
+            directories.sort(key=lambda p: p.name.lower())
+            for directory in directories:
+                directory_id = str(directory)
+                if directory_id in self.tree_paths:
+                    continue
+                self.tree_paths[directory_id] = directory
+                self.album_tree.insert(node_id, "end", iid=directory_id, text=f"📁 {directory.name}")
+                self.add_album_placeholder(directory_id, directory)
+        except (OSError, PermissionError):
+            return
 
     def toggle_all(self):
         if not self.folder:
             return
         expand = self.expand_button.cget("text") == "Alles uitklappen"
+        if not expand:
+            stack = list(self.album_tree.get_children(""))
+            while stack:
+                node = stack.pop()
+                stack.extend(self.album_tree.get_children(node))
+                self.album_tree.item(node, open=False)
+            self.expand_button.configure(text="Alles uitklappen")
+            return
+        self.expand_queue = list(self.album_tree.get_children(""))
+        self.expand_button.configure(text="Bezig met uitklappen…")
+        self.root.after(1, self.expand_all_step)
 
-        def apply(node):
-            self.album_tree.item(node, open=expand)
-            for child in self.album_tree.get_children(node):
-                apply(child)
-
-        for root_node in self.album_tree.get_children(""):
-            apply(root_node)
-        self.expand_button.configure(text="Alles inklappen" if expand else "Alles uitklappen")
+    def expand_all_step(self):
+        if not self.expand_queue:
+            self.expand_button.configure(text="Alles inklappen")
+            return
+        node = self.expand_queue.pop(0)
+        self.populate_album_node(node)
+        self.album_tree.item(node, open=True)
+        self.expand_queue.extend(
+            child for child in self.album_tree.get_children(node)
+            if not child.startswith("__lazy__")
+        )
+        self.root.after(1, self.expand_all_step)
 
     def album_opened(self, _event=None):
-        # The complete directory tree is already indexed; expanding is immediate.
-        return
+        selection = self.album_tree.focus()
+        if selection:
+            self.populate_album_node(selection)
 
     def album_selected(self, _event=None):
         selection = self.album_tree.selection()
@@ -350,14 +436,24 @@ class App:
         if not path.is_dir():
             return
         self.active_folder = path
-        key = str(path)
-        if key in self.tree_paths:
-            self.album_tree.selection_set(key)
-            self.album_tree.focus(key)
-            parent = path.parent
-            while parent in self.tree_paths:
-                self.album_tree.item(str(parent), open=True)
-                parent = parent.parent
+        if self.folder:
+            try:
+                relative = path.relative_to(self.folder)
+                current_id = str(self.folder)
+                self.populate_album_node(current_id)
+                self.album_tree.item(current_id, open=True)
+                for part in relative.parts:
+                    current_id = str(Path(current_id) / part)
+                    if current_id not in self.tree_paths:
+                        break
+                    self.populate_album_node(current_id)
+                    self.album_tree.item(current_id, open=True)
+                if current_id in self.tree_paths:
+                    self.album_tree.selection_set(current_id)
+                    self.album_tree.focus(current_id)
+                    self.album_tree.see(current_id)
+            except ValueError:
+                pass
         self.update_breadcrumb()
         self.filter()
 
