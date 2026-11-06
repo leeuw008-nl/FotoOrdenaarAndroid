@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import queue
 import threading
 import subprocess
@@ -261,7 +262,11 @@ class App:
         self.album_tree.bind("<<TreeviewSelect>>", self.album_selected)
         self.album_tree.bind("<<TreeviewOpen>>", self.album_opened)
 
-        ttk.Label(media_list, text="🖼 Foto's en video's", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(5, 4))
+        media_bar = ttk.Frame(media_list)
+        media_bar.pack(fill="x", pady=(5, 4))
+        ttk.Label(media_bar, text="🖼 Foto's en video's", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.delete_button = ttk.Button(media_bar, text="🗑 Verwijderen", command=self.delete_selected_media, state="disabled")
+        self.delete_button.pack(side="right")
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -292,7 +297,7 @@ class App:
         self.tab_frames = {
             "Medium": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab
         }
-        for name, label in (("Medium", "🖼  Medium"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata"), ("Gallery", "▦  Gallery")):
+        for name, label in (("Gallery", "▦  Gallery"), ("Medium", "🖼  Medium"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata")):
             button = tk.Button(
                 tab_bar, text=label, font=("Segoe UI", 12, "bold"),
                 padx=18, pady=9, relief="flat", bd=0,
@@ -380,6 +385,8 @@ class App:
     def clear_detail_panels(self):
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
+        if hasattr(self, "delete_button"):
+            self.delete_button.configure(state="disabled")
         self.preview_photo = None
         if hasattr(self, "preview"):
             self.preview.configure(image="", text="Selecteer een foto of video")
@@ -733,6 +740,7 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
+        self.delete_button.configure(state="normal")
         self.highlight_media_album(media)
         lines = [
             f"Bestand: {media.path.name}",
@@ -1011,12 +1019,168 @@ class App:
             if not medium.winfo_manager():
                 medium.pack(side="left", padx=(0, 3), pady=(0, 2), before=self.tab_buttons["Kaart"])
             if not metadata.winfo_manager():
-                metadata.pack(side="left", padx=(0, 3), pady=(0, 2), before=self.tab_buttons["Gallery"])
+                metadata.pack(side="left", padx=(0, 3), pady=(0, 2))
         else:
             medium.pack_forget()
             metadata.pack_forget()
             if self.active_tab in ("Medium", "Metadata"):
                 self.show_tab("Kaart")
+
+    @staticmethod
+    def normalized_media_stem(path):
+        """Verwijder herkenbare versie-aanduidingen uit een bestandsnaam."""
+        stem = path.stem.lower().strip()
+        patterns = (
+            r"(?:[_ -](?:bewerkt|bewerking|edited|edit|copy|kopie|kopie\d+|small|klein|thumb|thumbnail|resized|resize|scaled|compressed|compressie|export|web))+$",
+            r"(?:[ _-]\(\d+\))+$",
+            r"(?:[-_]\d+)$",
+        )
+        previous = None
+        while stem != previous:
+            previous = stem
+            for pattern in patterns:
+                stem = re.sub(pattern, "", stem, flags=re.IGNORECASE)
+        return stem
+
+    @staticmethod
+    def image_difference_hash(path):
+        """64-bit difference hash voor het herkennen van verkleinde/andere beeldversies."""
+        try:
+            with Image.open(path) as source:
+                image = ImageOps.exif_transpose(source).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+                pixels = list(image.getdata())
+            value = 0
+            for row in range(8):
+                for col in range(8):
+                    value = (value << 1) | int(pixels[row * 9 + col] > pixels[row * 9 + col + 1])
+            return value
+        except Exception:
+            return None
+
+    def find_derived_media(self, selected):
+        """Zoek naamvarianten en waarschijnlijk verkleinde beeldkopieën in album/subalbums."""
+        album = self.active_folder or self.folder
+        if not album:
+            return []
+        base = self.normalized_media_stem(selected.path)
+        matches = []
+        selected_hash = None
+        for candidate in self.items:
+            if candidate.path == selected.path or album not in candidate.path.parents:
+                continue
+            reason = ""
+            strong_name = False
+            candidate_base = self.normalized_media_stem(candidate.path)
+            if candidate_base == base:
+                reason = "Zelfde basisnaam / bestandsvariant"
+                strong_name = candidate.path.stem.lower() != selected.path.stem.lower()
+                if candidate.path.stem.lower() == selected.path.stem.lower():
+                    reason = "Zelfde basisnaam in andere map"
+            elif not selected.is_video and not candidate.is_video and candidate.size < selected.size * 0.90:
+                if selected_hash is None:
+                    selected_hash = self.image_difference_hash(selected.path)
+                candidate_hash = self.image_difference_hash(candidate.path)
+                if selected_hash is not None and candidate_hash is not None:
+                    distance = (selected_hash ^ candidate_hash).bit_count()
+                    if distance <= 5:
+                        reason = f"Sterk gelijkend beeld (hash-afstand {distance})"
+            if reason:
+                matches.append((candidate, reason, strong_name))
+        return matches
+
+    def delete_selected_media(self):
+        selected = self.selected
+        if not selected:
+            messagebox.showinfo("Verwijderen", "Selecteer eerst één foto of video.")
+            return
+        if not selected.path.exists():
+            messagebox.showwarning("Verwijderen", "Het geselecteerde bestand bestaat niet meer.")
+            return
+
+        matches = self.find_derived_media(selected)
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Media verwijderen")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.geometry("760x540")
+        dialog.minsize(560, 360)
+
+        ttk.Label(dialog, text="Controleer welke bestanden verwijderd moeten worden",
+                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(14, 4))
+        ttk.Label(dialog,
+                  text="Het geselecteerde bestand wordt verwijderd. Vink per extra bestand aan of het ook weg mag. Er wordt gezocht in het huidige album en alle subalbums.",
+                  wraplength=710).pack(anchor="w", padx=14, pady=(0, 10))
+
+        container = ttk.Frame(dialog)
+        container.pack(fill="both", expand=True, padx=14, pady=4)
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        ttk.Label(inner, text="Wordt verwijderd:", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 2))
+        ttk.Label(inner, text=str(selected.path), wraplength=680).pack(anchor="w", padx=(8, 4), pady=(0, 10))
+        choices = []
+        if matches:
+            ttk.Label(inner, text=f"Gevonden mogelijke afgeleide bestanden: {len(matches)}",
+                      font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 4))
+            for candidate, reason, strong_name in matches:
+                variable = tk.BooleanVar(value=strong_name)
+                line = ttk.Frame(inner)
+                line.pack(fill="x", anchor="w", pady=2)
+                ttk.Checkbutton(line, variable=variable).pack(side="left", anchor="n")
+                info = ttk.Frame(line)
+                info.pack(side="left", fill="x", expand=True)
+                ttk.Label(info, text=str(candidate.path), wraplength=650).pack(anchor="w")
+                ttk.Label(info, text=reason, foreground="#555555").pack(anchor="w")
+                choices.append((candidate, variable))
+        else:
+            ttk.Label(inner, text="Geen mogelijke afgeleide bestanden gevonden in dit album of de subalbums.").pack(anchor="w", pady=8)
+
+        footer = ttk.Frame(dialog)
+        footer.pack(fill="x", padx=14, pady=14)
+        ttk.Label(footer, text="Na je keuze volgt altijd nog een tweede bevestiging.").pack(side="left")
+
+        def cancel():
+            dialog.destroy()
+
+        def continue_delete():
+            extra = [media for media, variable in choices if variable.get()]
+            paths = [selected.path] + [media.path for media in extra]
+            if not messagebox.askyesno(
+                "Definitief bevestigen",
+                "De volgende bestanden worden definitief verwijderd:\n\n"
+                + "\n".join(str(path) for path in paths)
+                + "\n\nWeet je zeker dat je wilt doorgaan?",
+                parent=dialog
+            ):
+                return
+            failures = []
+            deleted = set()
+            for path in paths:
+                try:
+                    path.unlink()
+                    deleted.add(path)
+                except OSError as error:
+                    failures.append(f"{path}: {error}")
+            dialog.destroy()
+            if deleted:
+                self.items = [item for item in self.items if item.path not in deleted]
+                self.filtered = [item for item in self.filtered if item.path not in deleted]
+                self.clear_detail_panels()
+                self.filter()
+                self.status.set(f"{len(deleted)} bestand(en) verwijderd.")
+            if failures:
+                messagebox.showwarning("Niet alles verwijderd", "\n".join(failures), parent=self.root)
+            elif deleted:
+                messagebox.showinfo("Verwijderen", f"{len(deleted)} bestand(en) verwijderd.", parent=self.root)
+
+        ttk.Button(footer, text="Annuleren", command=cancel).pack(side="right", padx=(6, 0))
+        ttk.Button(footer, text="Doorgaan", command=continue_delete).pack(side="right")
 
     def open_map_media(self, media):
         """Open het medium waarop de gebruiker op de kaartspeld klikt."""
