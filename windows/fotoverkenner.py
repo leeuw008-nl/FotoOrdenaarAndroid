@@ -741,13 +741,12 @@ class App:
             return
         media = self.selected
         self.clear_map_markers()
-        if media and media.lat is not None and media.lon is not None:
+        self.map_content_available = bool(media and media.lat is not None and media.lon is not None)
+        if self.map_content_available:
             self.map_widget.set_position(media.lat, media.lon)
             self.map_widget.set_zoom(16)
             try:
-                self.map_marker = self.map_widget.set_marker(
-                    media.lat, media.lon, text=media.path.name
-                )
+                self.map_marker = self.map_widget.set_marker(media.lat, media.lon, text=media.path.name)
             except Exception:
                 self.map_marker = None
         else:
