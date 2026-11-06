@@ -136,6 +136,10 @@ class App:
         self.highlighting_media_album = False
         self.tree_paths: dict[str, Path] = {}
         self.scan_queue = queue.Queue()
+        self.gallery_thumb_queue = queue.Queue()
+        self.gallery_generation = 0
+        self.gallery_thumb_cache = {}
+        self.gallery_thumb_labels = {}
         self.scan_generation = 0
         self.scan_running = False
         self.expand_queue = []
@@ -230,12 +234,13 @@ class App:
         image_tab = ttk.Frame(tab_body)
         map_tab = ttk.Frame(tab_body)
         metadata_tab = ttk.Frame(tab_body)
-        for panel in (image_tab, map_tab, metadata_tab):
+        gallery_tab = ttk.Frame(tab_body)
+        for panel in (image_tab, map_tab, metadata_tab, gallery_tab):
             panel.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.tab_frames = {
-            "Afbeelding": image_tab, "Kaart": map_tab, "Metadata": metadata_tab
+            "Afbeelding": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab
         }
-        for name, label in (("Afbeelding", "🖼  Afbeelding"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata")):
+        for name, label in (("Afbeelding", "🖼  Afbeelding"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata"), ("Gallery", "▦  Gallery")):
             button = tk.Button(
                 tab_bar, text=label, font=("Segoe UI", 12, "bold"),
                 padx=18, pady=9, relief="flat", bd=0,
@@ -251,6 +256,24 @@ class App:
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file).pack(side="left")
+
+        gallery_top = ttk.Frame(gallery_tab, padding=(8, 8, 8, 4))
+        gallery_top.pack(fill="x")
+        self.gallery_heading = ttk.Label(gallery_top, text="Gallery", font=("Segoe UI", 11, "bold"))
+        self.gallery_heading.pack(side="left")
+        self.gallery_count = ttk.Label(gallery_top, text="0 items")
+        self.gallery_count.pack(side="right")
+        gallery_container = ttk.Frame(gallery_tab)
+        gallery_container.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.gallery_canvas = tk.Canvas(gallery_container, highlightthickness=0)
+        gallery_scroll = ttk.Scrollbar(gallery_container, orient="vertical", command=self.gallery_canvas.yview)
+        self.gallery_canvas.configure(yscrollcommand=gallery_scroll.set)
+        self.gallery_canvas.pack(side="left", fill="both", expand=True)
+        gallery_scroll.pack(side="right", fill="y")
+        self.gallery_inner = ttk.Frame(self.gallery_canvas)
+        self.gallery_window = self.gallery_canvas.create_window((0, 0), window=self.gallery_inner, anchor="nw")
+        self.gallery_inner.bind("<Configure>", lambda _e: self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all")))
+        self.gallery_canvas.bind("<Configure>", self.gallery_resize)
 
         metadata_heading = ttk.Label(
             metadata_tab, text="Metadata van geselecteerd bestand",
@@ -609,6 +632,7 @@ class App:
         else:
             result.sort(key=lambda item: item.modified, reverse=True)
         self.filtered = result
+        self.render_gallery()
         self.render_generation += 1
         generation = self.render_generation
         self.table.delete(*self.table.get_children())
@@ -710,7 +734,103 @@ class App:
         if self.selected and not self.selected.is_video:
             self.render_preview()
 
+    def gallery_resize(self, event=None):
+        if event is not None:
+            self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width)
+        self.root.after_idle(self.layout_gallery)
+
+    def layout_gallery(self):
+        if not hasattr(self, "gallery_inner"):
+            return
+        columns = max(2, min(6, self.gallery_canvas.winfo_width() // 180))
+        for index, child in enumerate(self.gallery_inner.winfo_children()):
+            row, column = divmod(index, columns)
+            child.grid_configure(row=row, column=column, sticky="nsew", padx=4, pady=4)
+        for column in range(columns):
+            self.gallery_inner.grid_columnconfigure(column, weight=1, uniform="gallery")
+
+    def render_gallery(self):
+        if not hasattr(self, "gallery_inner"):
+            return
+        self.gallery_generation += 1
+        generation = self.gallery_generation
+        self.gallery_thumb_labels = {}
+        for child in self.gallery_inner.winfo_children():
+            child.destroy()
+        media_items = list(self.filtered)
+        self.gallery_count.configure(text=str(len(media_items)) + " items")
+        folder = self.active_folder or self.folder
+        self.gallery_heading.configure(text="Gallery - " + (folder.name if folder else "geen album geselecteerd"))
+        if not media_items:
+            ttk.Label(self.gallery_inner, text="Geen media in deze map of onderliggende mappen.").grid(row=0, column=0, sticky="w", padx=12, pady=12)
+            self.update_tab_colors()
+            return
+        for index, media in enumerate(media_items):
+            tile = ttk.Frame(self.gallery_inner, relief="ridge", padding=4)
+            tile.grid(row=index // 4, column=index % 4, sticky="nsew", padx=4, pady=4)
+            tile.columnconfigure(0, weight=1)
+            thumb = tk.Label(tile, text="VIDEO" if media.is_video else "Laden...", anchor="center", width=20, height=7, bg="#e5e7eb", fg="#374151")
+            thumb.grid(row=0, column=0, sticky="nsew")
+            thumb.bind("<Button-1>", lambda _e, item=media: self.select_gallery_item(item))
+            name = ttk.Label(tile, text=media.path.name, wraplength=160, justify="center")
+            name.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+            name.bind("<Button-1>", lambda _e, item=media: self.select_gallery_item(item))
+            self.gallery_thumb_labels[media.path] = thumb
+            if not media.is_video:
+                cached = self.gallery_thumb_cache.get(media.path)
+                if cached is not None:
+                    photo = ImageTk.PhotoImage(cached)
+                    thumb.configure(image=photo, text="", width=160, height=110)
+                    thumb.image = photo
+                else:
+                    threading.Thread(target=self.load_gallery_thumbnail, args=(generation, media.path), name="GalleryThumb-" + str(generation), daemon=True).start()
+        self.layout_gallery()
+        self.root.after(100, self.poll_gallery_thumbnails)
+
+    def load_gallery_thumbnail(self, generation, path):
+        try:
+            with Image.open(path) as source:
+                image = ImageOps.exif_transpose(source)
+                image.thumbnail((220, 150), Image.Resampling.LANCZOS)
+                thumbnail = image.copy()
+        except Exception:
+            thumbnail = None
+        self.gallery_thumb_queue.put((generation, path, thumbnail))
+
+    def poll_gallery_thumbnails(self):
+        generation_now = self.gallery_generation
+        while True:
+            try:
+                generation, path, thumbnail = self.gallery_thumb_queue.get_nowait()
+            except queue.Empty:
+                break
+            if generation != generation_now or thumbnail is None:
+                continue
+            self.gallery_thumb_cache[path] = thumbnail
+            label = self.gallery_thumb_labels.get(path)
+            if label is not None and label.winfo_exists():
+                try:
+                    photo = ImageTk.PhotoImage(thumbnail)
+                    label.configure(image=photo, text="", width=160, height=110)
+                    label.image = photo
+                except Exception:
+                    pass
+        if any(t.is_alive() for t in threading.enumerate() if t.name.startswith("GalleryThumb-")):
+            self.root.after(100, self.poll_gallery_thumbnails)
+
+    def select_gallery_item(self, media):
+        try:
+            index = self.filtered.index(media)
+        except ValueError:
+            return
+        self.table.selection_set(str(index))
+        self.table.focus(str(index))
+        self.table.see(str(index))
+        self.select()
+        self.show_tab("Afbeelding")
+
     def render_preview(self):
+
         media = self.selected
         if not media:
             return
@@ -822,7 +942,8 @@ class App:
                 media.capture is not None, media.lat is not None, media.lon is not None,
                 bool(media.camera), media.width is not None, media.height is not None,
                 media.is_video
-            ))
+            )),
+            "Gallery": bool(self.filtered)
         }
         for name, button in self.tab_buttons.items():
             if available[name] and name == self.active_tab:
