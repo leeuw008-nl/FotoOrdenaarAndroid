@@ -300,6 +300,23 @@ class App:
             self.folder_label.configure(text=str(self.folder))
             self.scan()
 
+    def clear_detail_panels(self):
+        """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
+        self.selected = None
+        self.preview_photo = None
+        if hasattr(self, "preview"):
+            self.preview.configure(image="", text="Selecteer een foto of video")
+        if hasattr(self, "details"):
+            self.details.configure(state="normal")
+            self.details.delete("1.0", "end")
+            self.details.configure(state="disabled")
+        if self.map_widget:
+            self.clear_map_markers()
+            self.map_widget.set_position(52.519142, 6.423672)
+            self.map_widget.set_zoom(7)
+        self.map_content_available = False
+        self.update_tab_colors()
+
     def scan(self):
         if not self.folder or not self.folder.exists():
             return
@@ -310,7 +327,8 @@ class App:
         self.items = []
         self.filtered = []
         self.table.delete(*self.table.get_children())
-        self.status.set("Bestanden inventariseren op de achtergrond…")
+        self.clear_detail_panels()
+        self.status.set("Bestanden inventariseren…")
         self.build_album_tree()
 
         def worker():
@@ -323,22 +341,43 @@ class App:
                         continue
                     checked += 1
                     try:
-                        found.append(inspect_file(path))
+                        stat = path.stat()
+                        found.append(Media(path, datetime.fromtimestamp(stat.st_mtime), size=stat.st_size))
                     except (OSError, PermissionError):
                         pass
-                    except Exception:
-                        pass
-                    if checked % 100 == 0:
-                        self.scan_queue.put((generation, "progress", checked))
-            self.scan_queue.put((generation, "done", found))
+                    if checked % 250 == 0:
+                        self.scan_queue.put((generation, "inventory_progress", checked))
+            self.scan_queue.put((generation, "inventory_done", found))
 
-        threading.Thread(target=worker, name="FotoVerkennerScan", daemon=True).start()
+        threading.Thread(target=worker, name="FotoVerkennerInventaris", daemon=True).start()
         self.root.after(100, lambda: self.poll_scan(generation))
+
+    def start_metadata_scan(self, generation):
+        paths = [item.path for item in self.items]
+        def worker():
+            batch = []
+            checked = 0
+            for path in paths:
+                try:
+                    batch.append(inspect_file(path))
+                except Exception:
+                    continue
+                checked += 1
+                if len(batch) >= 30:
+                    self.scan_queue.put((generation, "metadata_batch", batch))
+                    batch = []
+                if checked % 100 == 0:
+                    self.scan_queue.put((generation, "metadata_progress", checked))
+            if batch:
+                self.scan_queue.put((generation, "metadata_batch", batch))
+            self.scan_queue.put((generation, "metadata_done", checked))
+        threading.Thread(target=worker, name="FotoVerkennerMetadata", daemon=True).start()
 
     def poll_scan(self, generation):
         if generation != self.scan_generation:
             return
         finished = False
+        path_indexes = {item.path: index for index, item in enumerate(self.items)}
         while True:
             try:
                 item_generation, kind, payload = self.scan_queue.get_nowait()
@@ -346,15 +385,30 @@ class App:
                 break
             if item_generation != generation:
                 continue
-            if kind == "progress":
-                self.status.set(f"Metadata lezen op achtergrond… {payload} bestanden verwerkt")
-            elif kind == "done":
+            if kind == "inventory_progress":
+                self.status.set(f"Bestanden inventariseren… {payload} gevonden")
+            elif kind == "inventory_done":
                 self.items = payload
                 self.scan_running = False
                 self.filter()
-                self.status.set(f"Gereed: {len(self.items)} foto- en videobestanden gevonden.")
+                self.status.set(f"{len(self.items)} bestanden getoond; metadata wordt nu opgehaald…")
+                self.update_tab_colors()
+                self.start_metadata_scan(generation)
+            elif kind == "metadata_batch":
+                for enriched in payload:
+                    index = path_indexes.get(enriched.path)
+                    if index is not None:
+                        self.items[index] = enriched
+            elif kind == "metadata_progress":
+                self.status.set(f"Metadata lezen… {payload} bestanden verwerkt")
+            elif kind == "metadata_done":
+                self.filter()
+                self.status.set(f"Gereed: {len(self.items)} bestanden; metadata verwerkt voor {payload} bestanden.")
+                if self.active_folder and self.folder and self.active_folder != self.folder:
+                    self.show_album_on_map(self.active_folder, switch_tab=False)
+                self.update_tab_colors()
                 finished = True
-        if not finished and self.scan_running:
+        if not finished:
             self.root.after(100, lambda: self.poll_scan(generation))
 
     def build_album_tree(self):
