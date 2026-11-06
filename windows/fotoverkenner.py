@@ -765,6 +765,7 @@ class App:
         self.render_preview()
         self.update_map()
         self.update_tab_colors()
+        self.show_tab("Medium")
 
     def highlight_media_album(self, media):
         """Markeer de map van het gekozen bestand zonder de huidige bestandenlijst te filteren."""
@@ -839,25 +840,27 @@ class App:
             name.grid(row=1, column=0, sticky="ew", pady=(3, 0))
             name.bind("<Button-1>", lambda _e, item=media: self.select_gallery_item(item))
             self.gallery_thumb_labels[media.path] = thumb
-            if not media.is_video:
-                cached = self.gallery_thumb_cache.get(media.path)
-                if cached is not None:
+            cached = self.gallery_thumb_cache.get(media.path)
+            if cached is not None:
                     photo = ImageTk.PhotoImage(cached)
                     thumb.configure(image=photo, text="", width=160, height=110)
                     thumb.image = photo
-                else:
-                    threading.Thread(target=self.load_gallery_thumbnail, args=(generation, media.path), name="GalleryThumb-" + str(generation), daemon=True).start()
+            else:
+                threading.Thread(target=self.load_gallery_thumbnail, args=(generation, media.path), name="GalleryThumb-" + str(generation), daemon=True).start()
         self.layout_gallery()
         self.root.after(100, self.poll_gallery_thumbnails)
 
     def load_gallery_thumbnail(self, generation, path):
-        try:
-            with Image.open(path) as source:
-                image = ImageOps.exif_transpose(source)
-                image.thumbnail((220, 150), Image.Resampling.LANCZOS)
-                thumbnail = image.copy()
-        except Exception:
-            thumbnail = None
+        if path.suffix.lower() in VIDEO_EXTS:
+            thumbnail = video_frame(path, (220, 150))
+        else:
+            try:
+                with Image.open(path) as source:
+                    image = ImageOps.exif_transpose(source)
+                    image.thumbnail((220, 150), Image.Resampling.LANCZOS)
+                    thumbnail = image.copy()
+            except Exception:
+                thumbnail = None
         self.gallery_thumb_queue.put((generation, path, thumbnail))
 
     def poll_gallery_thumbnails(self):
@@ -897,17 +900,21 @@ class App:
         media = self.selected
         if not media:
             return
-        if media.is_video:
-            self.preview.configure(image="", text="VIDEO\nDubbelklik of kies Openen / afspelen")
-            self.preview_photo = None
-            return
         try:
             width = max(200, self.preview.winfo_width() - 20)
             height = max(180, self.preview.winfo_height() - 24)
-            with Image.open(media.path) as image:
-                image = ImageOps.exif_transpose(image)
-                image.thumbnail((width, height), Image.Resampling.LANCZOS)
-                self.preview_photo = ImageTk.PhotoImage(image.copy())
+            if media.is_video:
+                image = video_frame(media.path, (width, height))
+                if image is None:
+                    self.preview.configure(image="", text="Videovoorbeeld niet beschikbaar\nDubbelklik of kies Openen / afspelen")
+                    self.preview_photo = None
+                    return
+            else:
+                with Image.open(media.path) as source:
+                    image = ImageOps.exif_transpose(source)
+                    image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                    image = image.copy()
+            self.preview_photo = ImageTk.PhotoImage(image)
             self.preview.configure(image=self.preview_photo, text="")
         except Exception:
             self.preview.configure(image="", text="Voorbeeld niet beschikbaar")
