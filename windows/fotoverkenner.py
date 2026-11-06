@@ -761,32 +761,37 @@ class App:
         album = path or self.active_folder or self.folder
         if not album:
             return
+        # Path.parents bevat ook alle dieper geneste subalbums.
         points = [
             item for item in self.items
-            if (item.path.parent == album or album in item.path.parents)
-            and item.lat is not None and item.lon is not None
+            if album in item.path.parents and item.lat is not None and item.lon is not None
         ]
         self.clear_map_markers()
+        self.map_content_available = bool(points)
         if not points:
             self.map_widget.set_position(52.519142, 6.423672)
             self.map_widget.set_zoom(7)
-            self.status.set(f"Geen GPS-locaties gevonden in album {album.name}.")
+            if self.scan_running:
+                self.status.set(f"Bestanden in {album.name} worden nog geïnventariseerd…")
+            else:
+                self.status.set(f"Nog geen GPS-metadata beschikbaar in album {album.name}.")
         else:
             latitudes = [item.lat for item in points]
             longitudes = [item.lon for item in points]
-            center_lat = sum(latitudes) / len(latitudes)
-            center_lon = sum(longitudes) / len(longitudes)
-            self.map_widget.set_position(center_lat, center_lon)
+            self.map_widget.set_position(
+                sum(latitudes) / len(latitudes), sum(longitudes) / len(longitudes)
+            )
             self.map_widget.set_zoom(16 if len(points) == 1 else 12)
             for item in points:
                 try:
-                    marker = self.map_widget.set_marker(
-                        item.lat, item.lon, text=item.path.name
+                    self.map_markers.append(
+                        self.map_widget.set_marker(item.lat, item.lon, text=item.path.name)
                     )
-                    self.map_markers.append(marker)
                 except Exception:
                     continue
-            self.status.set(f"{len(self.map_markers)} GPS-spelden getoond voor album {album.name}.")
+            self.status.set(
+                f"{len(self.map_markers)} GPS-spelden getoond voor album {album.name} inclusief subalbums."
+            )
         if switch_tab:
             self.show_tab("Kaart")
         self.update_tab_colors()
