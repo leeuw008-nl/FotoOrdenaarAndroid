@@ -199,6 +199,19 @@ class App:
         self.render_generation = 0
         self.build_ui()
 
+    def copy_text_selection(self, event=None):
+        """Kopieer geselecteerde bestandsnaamtekst naar het Windows-klembord."""
+        widget = event.widget if event is not None else self.filename_entry
+        try:
+            value = widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            value = widget.get("1.0", "end-1c")
+        if value:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.status.set("Bestandsnaam gekopieerd.")
+        return "break"
+
     @staticmethod
     def _protect_filename_entry(event):
         """Laat selecteren/kopieren toe, maar voorkom dat de bestandsnaam wordt gewijzigd."""
@@ -294,7 +307,8 @@ class App:
             "<Control-a>",
             lambda event: (self.filename_entry.tag_add("sel", "1.0", "end-1c"), "break")[1]
         )
-        self.filename_entry.configure(state="disabled")
+        self.filename_entry.bind("<Control-c>", self.copy_text_selection)
+        self.filename_entry.configure(cursor="xterm")
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -448,9 +462,7 @@ class App:
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
         if hasattr(self, "filename_entry"):
-            self.filename_entry.configure(state="normal")
             self.filename_entry.delete("1.0", "end")
-            self.filename_entry.configure(state="disabled")
         if hasattr(self, "delete_button"):
             self.delete_button.configure(state="disabled")
         self.preview_photo = None
@@ -806,10 +818,8 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
-        self.filename_entry.configure(state="normal")
         self.filename_entry.delete("1.0", "end")
         self.filename_entry.insert("1.0", media.path.name)
-        self.filename_entry.configure(state="disabled")
         self.delete_button.configure(state="normal")
         self.highlight_media_album(media)
         lines = [
@@ -1273,7 +1283,8 @@ class App:
             "<Control-a>",
             lambda event, field=filename_field: (field.tag_add("sel", "1.0", "end-1c"), "break")[1]
         )
-        filename_field.configure(state="disabled")
+        filename_field.bind("<Control-c>", self.copy_text_selection)
+        filename_field.configure(cursor="xterm")
         ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
         ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
