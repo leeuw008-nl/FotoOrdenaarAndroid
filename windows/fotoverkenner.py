@@ -1099,18 +1099,38 @@ class App:
 
     @staticmethod
     def image_analysis_data(path):
-        """Lees een afbeelding verkleind en bereken pHash plus ORB-kenmerken."""
+        """Bereken SIFT-kenmerken voor de hele foto en beide stereohelften."""
         if cv2 is None:
             return None
         try:
             with Image.open(path) as source:
                 image = ImageOps.exif_transpose(source).convert("RGB")
-                image.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+                image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
                 rgb = image.copy()
             import numpy as np
-            gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
 
-            # Perceptual hash via de lage frequenties van de DCT.
+            def describe(region, label):
+                gray = cv2.cvtColor(np.asarray(region), cv2.COLOR_RGB2GRAY)
+                sift = cv2.SIFT_create(nfeatures=2200, contrastThreshold=0.025)
+                keypoints, descriptors = sift.detectAndCompute(gray, None)
+                return {
+                    "label": label,
+                    "keypoints": keypoints,
+                    "descriptors": descriptors,
+                    "width": gray.shape[1],
+                    "height": gray.shape[0],
+                }
+
+            width, height = rgb.size
+            variants = [describe(rgb, "volledig")]
+            # Een stereo-opname kan bestaan uit twee naast elkaar geplaatste beelden.
+            # Vergelijk beide helften ook afzonderlijk met volledige foto's en uitsneden.
+            if width >= 240 and height >= 120:
+                middle = width // 2
+                variants.append(describe(rgb.crop((0, 0, middle, height)), "linkerhelft"))
+                variants.append(describe(rgb.crop((middle, 0, width, height)), "rechterhelft"))
+
+            gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
             small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
             dct = cv2.dct(small)
             low = dct[:8, :8].flatten()[1:]
@@ -1118,57 +1138,82 @@ class App:
             phash = 0
             for bit in (low > median):
                 phash = (phash << 1) | int(bit)
-
-            orb = cv2.ORB_create(nfeatures=1800, scaleFactor=1.2, nlevels=8)
-            keypoints, descriptors = orb.detectAndCompute(gray, None)
-            return {"phash": phash, "keypoints": keypoints, "descriptors": descriptors,
-                    "width": gray.shape[1], "height": gray.shape[0]}
+            return {"phash": phash, "variants": variants}
         except Exception:
             return None
 
     @staticmethod
     def compare_image_content(first, second):
-        """Conservatieve beeldvergelijking; vermijd toevallige ORB-overeenkomsten."""
+        """Zoek geometrisch bevestigde overlap tussen hele foto's en stereohelften."""
         if not first or not second:
             return None
         distance = (first["phash"] ^ second["phash"]).bit_count()
-        a, b = first.get("descriptors"), second.get("descriptors")
-        result = {"distance": distance, "inliers": 0, "ratio": 0.0,
-                  "coverage_a": 0.0, "coverage_b": 0.0}
-        if a is None or b is None or len(a) < 2 or len(b) < 2:
-            return result
+        best = {
+            "distance": distance, "inliers": 0, "ratio": 0.0,
+            "coverage_a": 0.0, "coverage_b": 0.0,
+            "variant_a": "volledig", "variant_b": "volledig",
+        }
         try:
             import numpy as np
-            matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-            pairs = matcher.knnMatch(a, b, k=2)
-            good = [m for pair in pairs if len(pair) == 2
-                    for m, n in [pair] if m.distance < 0.68 * n.distance]
-            if len(good) < 12:
-                return result
-            points_a, points_b = first["keypoints"], second["keypoints"]
-            src = np.float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-            dst = np.float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-            matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 3.0)
-            if mask is None or matrix is None:
-                return result
-            inlier_mask = mask.ravel().astype(bool)
-            inliers = int(inlier_mask.sum())
-            if inliers:
-                inlier_src, inlier_dst = src[inlier_mask], dst[inlier_mask]
-                area_a = max(1.0, float(first["width"] * first["height"]))
-                area_b = max(1.0, float(second["width"] * second["height"]))
-                coverage_a = cv2.contourArea(cv2.convexHull(inlier_src)) / area_a
-                coverage_b = cv2.contourArea(cv2.convexHull(inlier_dst)) / area_b
-            else:
-                coverage_a = coverage_b = 0.0
-            result.update({"inliers": inliers, "ratio": inliers / max(1, len(good)),
-                           "coverage_a": coverage_a, "coverage_b": coverage_b})
-            return result
+            matcher = cv2.BFMatcher(cv2.NORM_L2)
+            for variant_a in first.get("variants", []):
+                a = variant_a.get("descriptors")
+                if a is None or len(a) < 4:
+                    continue
+                for variant_b in second.get("variants", []):
+                    b = variant_b.get("descriptors")
+                    if b is None or len(b) < 4:
+                        continue
+                    pairs = matcher.knnMatch(a, b, k=2)
+                    good = []
+                    used_train = set()
+                    for pair in pairs:
+                        if len(pair) != 2:
+                            continue
+                        m, n = pair
+                        if m.distance < 0.72 * n.distance and m.trainIdx not in used_train:
+                            good.append(m)
+                            used_train.add(m.trainIdx)
+                    if len(good) < 12:
+                        continue
+                    points_a, points_b = variant_a["keypoints"], variant_b["keypoints"]
+                    src = np.float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+                    dst = np.float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+                    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
+                    if mask is None or matrix is None:
+                        continue
+                    inlier_mask = mask.ravel().astype(bool)
+                    inliers = int(inlier_mask.sum())
+                    if not inliers:
+                        continue
+                    inlier_src, inlier_dst = src[inlier_mask], dst[inlier_mask]
+                    area_a = max(1.0, float(variant_a["width"] * variant_a["height"]))
+                    area_b = max(1.0, float(variant_b["width"] * variant_b["height"]))
+                    coverage_a = cv2.contourArea(cv2.convexHull(inlier_src)) / area_a
+                    coverage_b = cv2.contourArea(cv2.convexHull(inlier_dst)) / area_b
+                    ratio = inliers / max(1, len(good))
+                    # Bij uitsneden is de dekking in de volledige foto klein.
+                    # Daarom toetsen we beide dekkingen, maar niet met dezelfde ondergrens.
+                    if (inliers >= 12 and ratio >= 0.38
+                            and max(coverage_a, coverage_b) >= 0.04
+                            and min(coverage_a, coverage_b) >= 0.004):
+                        score = inliers * ratio * (max(coverage_a, coverage_b) ** 0.5)
+                        old_score = best["inliers"] * best["ratio"] * (
+                            max(best["coverage_a"], best["coverage_b"]) ** 0.5
+                        )
+                        if score > old_score:
+                            best.update({
+                                "inliers": inliers, "ratio": ratio,
+                                "coverage_a": coverage_a, "coverage_b": coverage_b,
+                                "variant_a": variant_a["label"],
+                                "variant_b": variant_b["label"],
+                            })
         except Exception:
-            return result
+            return best
+        return best
 
     def find_derived_media(self, selected):
-        """Zoek naamvarianten en inhoudelijke overlap in album en alle subalbums."""
+        """Zoek naamvarianten, uitsneden en stereo-overlap in album en subalbums."""
         album = self.active_folder or self.folder
         if not album:
             return []
@@ -1187,7 +1232,6 @@ class App:
                 if not strong_name:
                     reason = "Zelfde basisnaam in andere map"
 
-            comparison = None
             if not selected.is_video and not candidate.is_video and candidate.size >= 4096:
                 if selected_data is None:
                     selected_data = self.image_analysis_data(selected.path)
@@ -1199,16 +1243,22 @@ class App:
                     ratio = comparison["ratio"]
                     coverage_a = comparison["coverage_a"]
                     coverage_b = comparison["coverage_b"]
-                    # ORB mag alleen matchen met veel geometrisch consistente punten
-                    # die over een zichtbaar deel van beide foto's verspreid liggen.
-                    if (inliers >= 30 and ratio >= 0.45
-                            and coverage_a >= 0.025 and coverage_b >= 0.025):
+                    if inliers >= 12:
+                        partial = min(coverage_a, coverage_b) < 0.025
+                        stereo = ("helft" in comparison["variant_a"]
+                                  or "helft" in comparison["variant_b"])
+                        if stereo:
+                            kind = "Stereo-overeenkomst"
+                        elif partial:
+                            kind = "Gedeeltelijke beeldoverlap"
+                        else:
+                            kind = "Beeldovereenkomst"
                         content_reason = (
-                            f"Sterke beeldoverlap: {inliers} bevestigde punten "
-                            f"({ratio:.0%}); dekking {coverage_a:.0%}/{coverage_b:.0%}"
+                            f"{kind}: {inliers} SIFT-punten ({ratio:.0%}); "
+                            f"{comparison['variant_a']} ↔ {comparison['variant_b']}"
                         )
                         reason = content_reason if not reason else reason + " · " + content_reason
-                    elif distance <= 4 and not reason:
+                    elif distance <= 3 and not reason:
                         reason = f"Bijna identiek beeld: pHash-afstand {distance}/63"
             if reason:
                 matches.append((candidate, reason, strong_name))
@@ -1243,7 +1293,7 @@ class App:
         # Het oorspronkelijk geselecteerde bestand staat als vaste, verplichte tegel.
         self._add_delete_candidate_tile(selected, "Geselecteerd bestand — wordt verwijderd", mandatory=True)
         for candidate, reason, strong_name in matches:
-            variable = tk.BooleanVar(value=strong_name)
+            variable = tk.BooleanVar(value=False)
             self._add_delete_candidate_tile(candidate, reason, variable=variable)
             self.delete_candidate_choices.append((candidate, variable))
 
