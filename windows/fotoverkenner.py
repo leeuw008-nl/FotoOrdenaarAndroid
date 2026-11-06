@@ -351,6 +351,10 @@ class App:
         self.delete_window = self.delete_canvas.create_window((0, 0), window=self.delete_inner, anchor="nw")
         self.delete_inner.bind("<Configure>", lambda _e: self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all")))
         self.delete_canvas.bind("<Configure>", lambda e: self.delete_canvas.itemconfigure(self.delete_window, width=e.width))
+        # Muiswiel scrollt ook wanneer de cursor boven een kandidaat-tegel staat.
+        self.root.bind_all("<MouseWheel>", self._scroll_delete_candidates, add="+")
+        self.root.bind_all("<Button-4>", self._scroll_delete_candidates, add="+")
+        self.root.bind_all("<Button-5>", self._scroll_delete_candidates, add="+")
         delete_actions = ttk.Frame(delete_tab, padding=(8, 4, 8, 8))
         delete_actions.pack(fill="x")
         ttk.Button(delete_actions, text="Annuleren", command=lambda: self.show_tab("Gallery")).pack(side="right", padx=(6, 0))
@@ -1027,6 +1031,32 @@ class App:
             self.show_tab("Kaart")
         self.update_tab_colors()
 
+    def _scroll_delete_candidates(self, event):
+        """Scroll kandidaten met het muiswiel, ook boven tegels en selectievakjes."""
+        if self.active_tab != "Verwijderen":
+            return
+        try:
+            widget = self.root.winfo_containing(event.x_root, event.y_root)
+            inside = False
+            while widget is not None:
+                if widget is self.delete_inner or widget is self.delete_canvas:
+                    inside = True
+                    break
+                widget = widget.master
+            if not inside:
+                return
+            if getattr(event, "num", None) == 4:
+                self.delete_canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                self.delete_canvas.yview_scroll(1, "units")
+            else:
+                delta = int(getattr(event, "delta", 0))
+                if delta:
+                    self.delete_canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+            return "break"
+        except Exception:
+            return
+
     def show_tab(self, name):
         if name not in self.tab_frames:
             return
@@ -1091,36 +1121,51 @@ class App:
 
             orb = cv2.ORB_create(nfeatures=1800, scaleFactor=1.2, nlevels=8)
             keypoints, descriptors = orb.detectAndCompute(gray, None)
-            return {"phash": phash, "keypoints": keypoints, "descriptors": descriptors}
+            return {"phash": phash, "keypoints": keypoints, "descriptors": descriptors,
+                    "width": gray.shape[1], "height": gray.shape[0]}
         except Exception:
             return None
 
     @staticmethod
     def compare_image_content(first, second):
-        """Geef pHash-afstand en geometrisch bevestigde ORB-overlap terug."""
+        """Conservatieve beeldvergelijking; vermijd toevallige ORB-overeenkomsten."""
         if not first or not second:
             return None
         distance = (first["phash"] ^ second["phash"]).bit_count()
         a, b = first.get("descriptors"), second.get("descriptors")
+        result = {"distance": distance, "inliers": 0, "ratio": 0.0,
+                  "coverage_a": 0.0, "coverage_b": 0.0}
         if a is None or b is None or len(a) < 2 or len(b) < 2:
-            return {"distance": distance, "inliers": 0, "ratio": 0.0}
+            return result
         try:
+            import numpy as np
             matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
             pairs = matcher.knnMatch(a, b, k=2)
             good = [m for pair in pairs if len(pair) == 2
-                    for m, n in [pair] if m.distance < 0.74 * n.distance]
-            if len(good) < 8:
-                return {"distance": distance, "inliers": 0, "ratio": 0.0}
-            points_a = first["keypoints"]
-            points_b = second["keypoints"]
-            src = __import__("numpy").float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-            dst = __import__("numpy").float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-            _matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
-            inliers = int(mask.ravel().sum()) if mask is not None else 0
-            return {"distance": distance, "inliers": inliers,
-                    "ratio": inliers / max(1, len(good))}
+                    for m, n in [pair] if m.distance < 0.68 * n.distance]
+            if len(good) < 12:
+                return result
+            points_a, points_b = first["keypoints"], second["keypoints"]
+            src = np.float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+            dst = np.float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+            matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 3.0)
+            if mask is None or matrix is None:
+                return result
+            inlier_mask = mask.ravel().astype(bool)
+            inliers = int(inlier_mask.sum())
+            if inliers:
+                inlier_src, inlier_dst = src[inlier_mask], dst[inlier_mask]
+                area_a = max(1.0, float(first["width"] * first["height"]))
+                area_b = max(1.0, float(second["width"] * second["height"]))
+                coverage_a = cv2.contourArea(cv2.convexHull(inlier_src)) / area_a
+                coverage_b = cv2.contourArea(cv2.convexHull(inlier_dst)) / area_b
+            else:
+                coverage_a = coverage_b = 0.0
+            result.update({"inliers": inliers, "ratio": inliers / max(1, len(good)),
+                           "coverage_a": coverage_a, "coverage_b": coverage_b})
+            return result
         except Exception:
-            return {"distance": distance, "inliers": 0, "ratio": 0.0}
+            return result
 
     def find_derived_media(self, selected):
         """Zoek naamvarianten en inhoudelijke overlap in album en alle subalbums."""
@@ -1152,14 +1197,19 @@ class App:
                     distance = comparison["distance"]
                     inliers = comparison["inliers"]
                     ratio = comparison["ratio"]
-                    if inliers >= 12 and ratio >= 0.20:
+                    coverage_a = comparison["coverage_a"]
+                    coverage_b = comparison["coverage_b"]
+                    # ORB mag alleen matchen met veel geometrisch consistente punten
+                    # die over een zichtbaar deel van beide foto's verspreid liggen.
+                    if (inliers >= 30 and ratio >= 0.45
+                            and coverage_a >= 0.025 and coverage_b >= 0.025):
                         content_reason = (
-                            f"Inhoudelijke overlap: {inliers} geometrisch bevestigde beeldpunten "
-                            f"({ratio:.0%}); pHash-afstand {distance}/63"
+                            f"Sterke beeldoverlap: {inliers} bevestigde punten "
+                            f"({ratio:.0%}); dekking {coverage_a:.0%}/{coverage_b:.0%}"
                         )
                         reason = content_reason if not reason else reason + " · " + content_reason
-                    elif distance <= 9 and not reason:
-                        reason = f"Sterk gelijkend beeld: pHash-afstand {distance}/63"
+                    elif distance <= 4 and not reason:
+                        reason = f"Bijna identiek beeld: pHash-afstand {distance}/63"
             if reason:
                 matches.append((candidate, reason, strong_name))
         return matches
