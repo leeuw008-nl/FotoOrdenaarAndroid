@@ -506,11 +506,11 @@ class App:
             return
         path = self.tree_paths.get(selection[0])
         if path and path.is_dir():
+            self.clear_detail_panels()
             self.active_folder = path
             self.update_breadcrumb()
             self.filter()
-            if self.album_map_enabled.get():
-                self.show_album_on_map(path, switch_tab=True)
+            self.show_album_on_map(path, switch_tab=True)
 
     def update_breadcrumb(self):
         if not hasattr(self, "breadcrumb_bar"):
