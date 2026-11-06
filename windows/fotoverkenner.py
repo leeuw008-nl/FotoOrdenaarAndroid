@@ -129,7 +129,7 @@ class App:
         self.map_markers = []
         self.map_content_available = False
         self.album_map_path = None
-        self.album_map_enabled = tk.BooleanVar(value=False)
+        self.album_map_enabled = tk.BooleanVar(value=True)
         self.active_tab = "Afbeelding"
         self.tab_buttons = {}
         self.tab_frames = {}
@@ -513,7 +513,11 @@ class App:
             self.active_folder = path
             self.update_breadcrumb()
             self.filter()
-            self.show_album_on_map(path, switch_tab=True)
+            if self.album_map_enabled.get():
+                self.album_map_path = path
+                self.show_album_on_map(path, switch_tab=True)
+            else:
+                self.album_map_path = None
 
     def update_breadcrumb(self):
         if not hasattr(self, "breadcrumb_bar"):
