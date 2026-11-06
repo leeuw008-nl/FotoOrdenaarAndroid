@@ -1178,6 +1178,13 @@ class App:
         for child in self.delete_inner.winfo_children():
             child.destroy()
 
+        # Open het vijfde tabblad direct; het zoeken naar afgeleide bestanden
+        # kan enige tijd duren bij grote albums.
+        self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
+        self.delete_count.configure(text="Kandidaten zoeken…")
+        self.delete_confirm_button.configure(state="disabled")
+        self.show_tab("Verwijderen")
+
         matches = self.find_derived_media(selected)
         self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
         self.delete_count.configure(text=f"{len(matches) + 1} bestanden")
