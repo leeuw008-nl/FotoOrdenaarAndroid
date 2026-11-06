@@ -1177,8 +1177,15 @@ class App:
         matches = self.find_derived_media(selected)
         if self.delete_selected_item is not selected:
             return
+        # Bouw het overzicht opnieuw op zodat het gekozen bestand altijd
+        # als eerste en verplicht geselecteerd zichtbaar blijft.
+        for child in self.delete_inner.winfo_children():
+            child.destroy()
+        self._add_delete_candidate_tile(
+            selected, "Geselecteerde bestand — wordt verwijderd", mandatory=True
+        )
         self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
-        self.delete_count.configure(text=f"{len(matches) + 1} bestanden")
+        self.delete_count.configure(text=f"{len(matches) + 1} bestanden (inclusief geselecteerde)")
         self.delete_confirm_button.configure(state="normal")
         for candidate, reason, _strong_name in matches:
             variable = tk.BooleanVar(value=False)
@@ -1218,7 +1225,7 @@ class App:
         # Een readonly invoerveld maakt de volledige bestandsnaam selecteerbaar en kopieerbaar.
         filename_field = tk.Entry(
             tile, relief="flat", justify="center", state="readonly",
-            readonlybackground=tile.cget("background"),
+            readonlybackground="#f0f0f0",
             font=("Segoe UI", 9)
         )
         filename_field.pack(fill="x", pady=(5, 2))
