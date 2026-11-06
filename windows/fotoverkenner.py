@@ -127,6 +127,7 @@ class App:
         self.map_widget = None
         self.map_marker = None
         self.map_markers = []
+        self.map_content_available = False
         self.album_map_enabled = tk.BooleanVar(value=False)
         self.active_tab = "Afbeelding"
         self.tab_buttons = {}
@@ -809,16 +810,15 @@ class App:
         media = self.selected
         available = {
             "Afbeelding": media is not None,
-            "Kaart": any(item.lat is not None and item.lon is not None for item in self.items),
+            "Kaart": bool(getattr(self, "map_content_available", False)),
             "Metadata": media is not None and any((
-                media.capture is not None, media.lat is not None,
-                media.lon is not None, bool(media.camera),
-                media.width is not None, media.height is not None,
+                media.capture is not None, media.lat is not None, media.lon is not None,
+                bool(media.camera), media.width is not None, media.height is not None,
                 media.is_video
             ))
         }
         for name, button in self.tab_buttons.items():
-            if name == self.active_tab:
+            if available[name] and name == self.active_tab:
                 bg, fg = "#16803c", "#ffffff"
             elif available[name]:
                 bg, fg = "#b7e4c7", "#14532d"
