@@ -265,8 +265,6 @@ class App:
         media_bar = ttk.Frame(media_list)
         media_bar.pack(fill="x", pady=(5, 4))
         ttk.Label(media_bar, text="🖼 Foto's en video's", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.delete_button = ttk.Button(media_bar, text="🗑 Verwijderen", command=self.delete_selected_media, state="disabled")
-        self.delete_button.pack(side="right")
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -292,12 +290,13 @@ class App:
         map_tab = ttk.Frame(tab_body)
         metadata_tab = ttk.Frame(tab_body)
         gallery_tab = ttk.Frame(tab_body)
-        for panel in (image_tab, map_tab, metadata_tab, gallery_tab):
+        delete_tab = ttk.Frame(tab_body)
+        for panel in (image_tab, map_tab, metadata_tab, gallery_tab, delete_tab):
             panel.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.tab_frames = {
-            "Medium": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab
+            "Medium": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab, "Verwijderen": delete_tab
         }
-        for name, label in (("Gallery", "▦  Gallery"), ("Medium", "🖼  Medium"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata")):
+        for name, label in (("Gallery", "▦  Gallery"), ("Medium", "🖼  Medium"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata"), ("Verwijderen", "🗑  Verwijderen")):
             button = tk.Button(
                 tab_bar, text=label, font=("Segoe UI", 12, "bold"),
                 padx=18, pady=9, relief="flat", bd=0,
@@ -313,6 +312,8 @@ class App:
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file).pack(side="left")
+        self.delete_button = ttk.Button(image_actions, text="🗑 Verwijderen", command=self.delete_selected_media, state="disabled")
+        self.delete_button.pack(side="left", padx=(8, 0))
 
         gallery_top = ttk.Frame(gallery_tab, padding=(8, 8, 8, 4))
         gallery_top.pack(fill="x")
@@ -331,6 +332,30 @@ class App:
         self.gallery_window = self.gallery_canvas.create_window((0, 0), window=self.gallery_inner, anchor="nw")
         self.gallery_inner.bind("<Configure>", lambda _e: self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all")))
         self.gallery_canvas.bind("<Configure>", self.gallery_resize)
+
+        delete_top = ttk.Frame(delete_tab, padding=(8, 8, 8, 4))
+        delete_top.pack(fill="x")
+        self.delete_heading = ttk.Label(delete_top, text="Te verwijderen media", font=("Segoe UI", 11, "bold"))
+        self.delete_heading.pack(side="left")
+        self.delete_count = ttk.Label(delete_top, text="0 kandidaten")
+        self.delete_count.pack(side="right")
+        ttk.Label(delete_tab, text="Het geselecteerde bestand staat vast bovenaan. Vink de overige gevonden bestanden aan die ook verwijderd mogen worden.", wraplength=900).pack(anchor="w", padx=10, pady=(0, 6))
+        delete_container = ttk.Frame(delete_tab)
+        delete_container.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.delete_canvas = tk.Canvas(delete_container, highlightthickness=0)
+        delete_scroll = ttk.Scrollbar(delete_container, orient="vertical", command=self.delete_canvas.yview)
+        self.delete_canvas.configure(yscrollcommand=delete_scroll.set)
+        self.delete_canvas.pack(side="left", fill="both", expand=True)
+        delete_scroll.pack(side="right", fill="y")
+        self.delete_inner = ttk.Frame(self.delete_canvas)
+        self.delete_window = self.delete_canvas.create_window((0, 0), window=self.delete_inner, anchor="nw")
+        self.delete_inner.bind("<Configure>", lambda _e: self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all")))
+        self.delete_canvas.bind("<Configure>", lambda e: self.delete_canvas.itemconfigure(self.delete_window, width=e.width))
+        delete_actions = ttk.Frame(delete_tab, padding=(8, 4, 8, 8))
+        delete_actions.pack(fill="x")
+        ttk.Button(delete_actions, text="Annuleren", command=lambda: self.show_tab("Gallery")).pack(side="right", padx=(6, 0))
+        self.delete_confirm_button = ttk.Button(delete_actions, text="Geselecteerde bestanden verwijderen", command=self.confirm_delete_candidates, state="disabled")
+        self.delete_confirm_button.pack(side="right")
 
         metadata_heading = ttk.Label(
             metadata_tab, text="Metadata van geselecteerd bestand",
@@ -1148,90 +1173,95 @@ class App:
             messagebox.showwarning("Verwijderen", "Het geselecteerde bestand bestaat niet meer.")
             return
 
+        self.delete_selected_item = selected
+        self.delete_candidate_choices = []
+        for child in self.delete_inner.winfo_children():
+            child.destroy()
+
         matches = self.find_derived_media(selected)
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Media verwijderen")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.geometry("760x540")
-        dialog.minsize(560, 360)
+        self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
+        self.delete_count.configure(text=f"{len(matches) + 1} bestanden")
+        self.delete_confirm_button.configure(state="normal")
 
-        ttk.Label(dialog, text="Controleer welke bestanden verwijderd moeten worden",
-                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(14, 4))
-        ttk.Label(dialog,
-                  text="Het geselecteerde bestand wordt verwijderd. Vink per extra bestand aan of het ook weg mag. Er wordt gezocht in het huidige album en alle subalbums.",
-                  wraplength=710).pack(anchor="w", padx=14, pady=(0, 10))
+        # Het oorspronkelijk geselecteerde bestand staat als vaste, verplichte tegel.
+        self._add_delete_candidate_tile(selected, "Geselecteerd bestand — wordt verwijderd", mandatory=True)
+        for candidate, reason, strong_name in matches:
+            variable = tk.BooleanVar(value=strong_name)
+            self._add_delete_candidate_tile(candidate, reason, variable=variable)
+            self.delete_candidate_choices.append((candidate, variable))
 
-        container = ttk.Frame(dialog)
-        container.pack(fill="both", expand=True, padx=14, pady=4)
-        canvas = tk.Canvas(container, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
-        inner = ttk.Frame(canvas)
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        if not matches:
+            ttk.Label(self.delete_inner, text="Geen aanvullende afgeleide media gevonden.").grid(
+                row=1, column=0, sticky="w", padx=12, pady=12
+            )
+        self.show_tab("Verwijderen")
 
-        ttk.Label(inner, text="Wordt verwijderd:", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 2))
-        ttk.Label(inner, text=str(selected.path), wraplength=680).pack(anchor="w", padx=(8, 4), pady=(0, 10))
-        choices = []
-        if matches:
-            ttk.Label(inner, text=f"Gevonden mogelijke afgeleide bestanden: {len(matches)}",
-                      font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 4))
-            for candidate, reason, strong_name in matches:
-                variable = tk.BooleanVar(value=strong_name)
-                line = ttk.Frame(inner)
-                line.pack(fill="x", anchor="w", pady=2)
-                ttk.Checkbutton(line, variable=variable).pack(side="left", anchor="n")
-                info = ttk.Frame(line)
-                info.pack(side="left", fill="x", expand=True)
-                ttk.Label(info, text=str(candidate.path), wraplength=650).pack(anchor="w")
-                ttk.Label(info, text=reason, foreground="#555555").pack(anchor="w")
-                choices.append((candidate, variable))
+    def _add_delete_candidate_tile(self, media, reason, variable=None, mandatory=False):
+        index = len(self.delete_inner.winfo_children())
+        tile = ttk.Frame(self.delete_inner, relief="ridge", padding=7)
+        tile.grid(row=index // 3, column=index % 3, sticky="nsew", padx=5, pady=5)
+        self.delete_inner.columnconfigure(index % 3, weight=1)
+        thumb = tk.Label(tile, text="VIDEO" if media.is_video else "Voorbeeld niet beschikbaar",
+                         width=22, height=7, bg="#e5e7eb", fg="#374151", anchor="center")
+        thumb.pack(fill="x")
+        try:
+            cached = self.gallery_thumb_cache.get(media.path)
+            if cached is None:
+                if media.is_video:
+                    cached = video_frame(media.path, (220, 150))
+                else:
+                    with Image.open(media.path) as source:
+                        preview = ImageOps.exif_transpose(source)
+                        preview.thumbnail((220, 150), Image.Resampling.LANCZOS)
+                        cached = preview.copy()
+            if cached is not None:
+                photo = ImageTk.PhotoImage(cached)
+                thumb.configure(image=photo, text="", width=220, height=150)
+                thumb.image = photo
+        except Exception:
+            pass
+        ttk.Label(tile, text=media.path.name, wraplength=220, justify="center").pack(fill="x", pady=(5, 2))
+        ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
+        ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
+        if mandatory:
+            ttk.Label(tile, text="☑ Wordt verwijderd", foreground="#9b1c1c",
+                      font=("Segoe UI", 9, "bold")).pack(anchor="w")
         else:
-            ttk.Label(inner, text="Geen mogelijke afgeleide bestanden gevonden in dit album of de subalbums.").pack(anchor="w", pady=8)
+            ttk.Checkbutton(tile, text="Ook verwijderen", variable=variable).pack(anchor="w")
 
-        footer = ttk.Frame(dialog)
-        footer.pack(fill="x", padx=14, pady=14)
-        ttk.Label(footer, text="Na je keuze volgt altijd nog een tweede bevestiging.").pack(side="left")
-
-        def cancel():
-            dialog.destroy()
-
-        def continue_delete():
-            extra = [media for media, variable in choices if variable.get()]
-            paths = [selected.path] + [media.path for media in extra]
-            if not messagebox.askyesno(
-                "Definitief bevestigen",
-                "De volgende bestanden worden definitief verwijderd:\n\n"
-                + "\n".join(str(path) for path in paths)
-                + "\n\nWeet je zeker dat je wilt doorgaan?",
-                parent=dialog
-            ):
-                return
-            failures = []
-            deleted = set()
-            for path in paths:
-                try:
-                    path.unlink()
-                    deleted.add(path)
-                except OSError as error:
-                    failures.append(f"{path}: {error}")
-            dialog.destroy()
-            if deleted:
-                self.items = [item for item in self.items if item.path not in deleted]
-                self.filtered = [item for item in self.filtered if item.path not in deleted]
-                self.clear_detail_panels()
-                self.filter()
-                self.status.set(f"{len(deleted)} bestand(en) verwijderd.")
-            if failures:
-                messagebox.showwarning("Niet alles verwijderd", "\n".join(failures), parent=self.root)
-            elif deleted:
-                messagebox.showinfo("Verwijderen", f"{len(deleted)} bestand(en) verwijderd.", parent=self.root)
-
-        ttk.Button(footer, text="Annuleren", command=cancel).pack(side="right", padx=(6, 0))
-        ttk.Button(footer, text="Doorgaan", command=continue_delete).pack(side="right")
+    def confirm_delete_candidates(self):
+        selected = getattr(self, "delete_selected_item", None)
+        if not selected or not selected.path.exists():
+            messagebox.showwarning("Verwijderen", "Het oorspronkelijke bestand bestaat niet meer.")
+            return
+        extra = [media for media, variable in self.delete_candidate_choices if variable.get()]
+        paths = [selected.path] + [media.path for media in extra]
+        if not messagebox.askyesno(
+            "Definitief bevestigen",
+            "De volgende bestanden worden definitief verwijderd:\\n\\n"
+            + "\\n".join(str(path) for path in paths)
+            + "\\n\\nWeet je zeker dat je wilt doorgaan?"
+        ):
+            return
+        failures = []
+        deleted = set()
+        for path in paths:
+            try:
+                path.unlink()
+                deleted.add(path)
+            except OSError as error:
+                failures.append(f"{path}: {error}")
+        if deleted:
+            self.items = [item for item in self.items if item.path not in deleted]
+            self.filtered = [item for item in self.filtered if item.path not in deleted]
+            self.clear_detail_panels()
+            self.filter()
+            self.show_tab("Gallery")
+            self.status.set(f"{len(deleted)} bestand(en) verwijderd.")
+        if failures:
+            messagebox.showwarning("Niet alles verwijderd", "\\n".join(failures), parent=self.root)
+        elif deleted:
+            messagebox.showinfo("Verwijderen", f"{len(deleted)} bestand(en) verwijderd.", parent=self.root)
 
     def open_map_media(self, media):
         """Open het medium waarop de gebruiker op de kaartspeld klikt."""
@@ -1250,7 +1280,8 @@ class App:
                 bool(media.camera), media.width is not None, media.height is not None,
                 media.is_video
             )),
-            "Gallery": bool(self.filtered)
+            "Gallery": bool(self.filtered),
+            "Verwijderen": bool(getattr(self, "delete_selected_item", None))
         }
         for name, button in self.tab_buttons.items():
             if available[name] and name == self.active_tab:
