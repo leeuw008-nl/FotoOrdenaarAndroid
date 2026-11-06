@@ -18,6 +18,11 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageOps, ExifTags
 
 try:
+    import cv2
+except Exception:
+    cv2 = None
+
+try:
     import tkintermapview
 except Exception:
     tkintermapview = None
@@ -66,6 +71,9 @@ class Media:
     height: int | None = None
     camera: str = ""
     size: int = 0
+    duration: float | None = None
+    fps: float | None = None
+    codec: str = ""
 
     @property
     def is_video(self):
@@ -102,7 +110,51 @@ def inspect_file(path):
                 media.lon = dms(gps.get("GPSLongitude"), gps.get("GPSLongitudeRef", "E"))
         except Exception:
             pass
+    elif path.suffix.lower() in VIDEO_EXTS and cv2 is not None:
+        try:
+            capture = cv2.VideoCapture(str(path))
+            if capture.isOpened():
+                media.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or None
+                media.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or None
+                fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+                frames = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                media.fps = fps if fps > 0 else None
+                media.duration = frames / fps if fps > 0 and frames > 0 else None
+                try:
+                    code = int(capture.get(cv2.CAP_PROP_FOURCC))
+                    media.codec = "".join(chr((code >> (8 * i)) & 0xFF) for i in range(4)).strip("\x00 ")
+                except Exception:
+                    pass
+            capture.release()
+        except Exception:
+            pass
     return media
+
+
+def video_frame(path, size=(1000, 700)):
+    if cv2 is None:
+        return None
+    capture = None
+    try:
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            return None
+        capture.set(cv2.CAP_PROP_POS_MSEC, 1000)
+        ok, frame = capture.read()
+        if not ok:
+            capture.set(cv2.CAP_PROP_POS_MSEC, 0)
+            ok, frame = capture.read()
+        if not ok:
+            return None
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(frame)
+        image.thumbnail(size, Image.Resampling.LANCZOS)
+        return image.copy()
+    except Exception:
+        return None
+    finally:
+        if capture is not None:
+            capture.release()
 
 
 class App:
@@ -539,9 +591,10 @@ class App:
             self.filter()
             if self.album_map_enabled.get():
                 self.album_map_path = path
-                self.show_album_on_map(path, switch_tab=True)
+                self.show_album_on_map(path, switch_tab=False)
             else:
                 self.album_map_path = None
+            self.show_tab("Gallery")
 
     def update_breadcrumb(self):
         if not hasattr(self, "breadcrumb_bar"):
@@ -697,6 +750,14 @@ class App:
             lines.append(f"GPS: {media.lat:.6f}, {media.lon:.6f}")
         if media.place:
             lines.append(f"Plaats: {media.place}")
+        if media.is_video:
+            if media.duration is not None:
+                seconds = int(media.duration)
+                lines.append(f"Duur: {seconds // 60:02d}:{seconds % 60:02d}")
+            if media.fps is not None:
+                lines.append(f"Beeldsnelheid: {media.fps:.2f} fps")
+            if media.codec:
+                lines.append(f"Videocodec: {media.codec}")
         self.details.configure(state="normal")
         self.details.delete("1.0", "end")
         self.details.insert("1.0", "\n".join(lines))
