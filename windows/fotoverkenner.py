@@ -1043,28 +1043,68 @@ class App:
         return stem
 
     @staticmethod
-    def image_difference_hash(path):
-        """64-bit difference hash voor het herkennen van verkleinde/andere beeldversies."""
+    def image_analysis_data(path):
+        """Lees een afbeelding verkleind en bereken pHash plus ORB-kenmerken."""
+        if cv2 is None:
+            return None
         try:
             with Image.open(path) as source:
-                image = ImageOps.exif_transpose(source).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-                pixels = list(image.getdata())
-            value = 0
-            for row in range(8):
-                for col in range(8):
-                    value = (value << 1) | int(pixels[row * 9 + col] > pixels[row * 9 + col + 1])
-            return value
+                image = ImageOps.exif_transpose(source).convert("RGB")
+                image.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+                rgb = image.copy()
+            import numpy as np
+            gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
+
+            # Perceptual hash via de lage frequenties van de DCT.
+            small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
+            dct = cv2.dct(small)
+            low = dct[:8, :8].flatten()[1:]
+            median = float(np.median(low))
+            phash = 0
+            for bit in (low > median):
+                phash = (phash << 1) | int(bit)
+
+            orb = cv2.ORB_create(nfeatures=1800, scaleFactor=1.2, nlevels=8)
+            keypoints, descriptors = orb.detectAndCompute(gray, None)
+            return {"phash": phash, "keypoints": keypoints, "descriptors": descriptors}
         except Exception:
             return None
 
+    @staticmethod
+    def compare_image_content(first, second):
+        """Geef pHash-afstand en geometrisch bevestigde ORB-overlap terug."""
+        if not first or not second:
+            return None
+        distance = (first["phash"] ^ second["phash"]).bit_count()
+        a, b = first.get("descriptors"), second.get("descriptors")
+        if a is None or b is None or len(a) < 2 or len(b) < 2:
+            return {"distance": distance, "inliers": 0, "ratio": 0.0}
+        try:
+            matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+            pairs = matcher.knnMatch(a, b, k=2)
+            good = [m for pair in pairs if len(pair) == 2
+                    for m, n in [pair] if m.distance < 0.74 * n.distance]
+            if len(good) < 8:
+                return {"distance": distance, "inliers": 0, "ratio": 0.0}
+            points_a = first["keypoints"]
+            points_b = second["keypoints"]
+            src = __import__("numpy").float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+            dst = __import__("numpy").float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+            _matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+            inliers = int(mask.ravel().sum()) if mask is not None else 0
+            return {"distance": distance, "inliers": inliers,
+                    "ratio": inliers / max(1, len(good))}
+        except Exception:
+            return {"distance": distance, "inliers": 0, "ratio": 0.0}
+
     def find_derived_media(self, selected):
-        """Zoek naamvarianten en waarschijnlijk verkleinde beeldkopieën in album/subalbums."""
+        """Zoek naamvarianten en inhoudelijke overlap in album en alle subalbums."""
         album = self.active_folder or self.folder
         if not album:
             return []
         base = self.normalized_media_stem(selected.path)
         matches = []
-        selected_hash = None
+        selected_data = None
         for candidate in self.items:
             if candidate.path == selected.path or album not in candidate.path.parents:
                 continue
@@ -1074,16 +1114,27 @@ class App:
             if candidate_base == base:
                 reason = "Zelfde basisnaam / bestandsvariant"
                 strong_name = candidate.path.stem.lower() != selected.path.stem.lower()
-                if candidate.path.stem.lower() == selected.path.stem.lower():
+                if not strong_name:
                     reason = "Zelfde basisnaam in andere map"
-            elif not selected.is_video and not candidate.is_video and candidate.size < selected.size * 0.90:
-                if selected_hash is None:
-                    selected_hash = self.image_difference_hash(selected.path)
-                candidate_hash = self.image_difference_hash(candidate.path)
-                if selected_hash is not None and candidate_hash is not None:
-                    distance = (selected_hash ^ candidate_hash).bit_count()
-                    if distance <= 5:
-                        reason = f"Sterk gelijkend beeld (hash-afstand {distance})"
+
+            comparison = None
+            if not selected.is_video and not candidate.is_video and candidate.size >= 4096:
+                if selected_data is None:
+                    selected_data = self.image_analysis_data(selected.path)
+                candidate_data = self.image_analysis_data(candidate.path)
+                comparison = self.compare_image_content(selected_data, candidate_data)
+                if comparison:
+                    distance = comparison["distance"]
+                    inliers = comparison["inliers"]
+                    ratio = comparison["ratio"]
+                    if inliers >= 12 and ratio >= 0.20:
+                        content_reason = (
+                            f"Inhoudelijke overlap: {inliers} geometrisch bevestigde beeldpunten "
+                            f"({ratio:.0%}); pHash-afstand {distance}/63"
+                        )
+                        reason = content_reason if not reason else reason + " · " + content_reason
+                    elif distance <= 9 and not reason:
+                        reason = f"Sterk gelijkend beeld: pHash-afstand {distance}/63"
             if reason:
                 matches.append((candidate, reason, strong_name))
         return matches
