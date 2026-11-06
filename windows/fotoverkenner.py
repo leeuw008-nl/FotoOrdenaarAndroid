@@ -1168,7 +1168,7 @@ class App:
         self.update_idletasks()
 
         # Start de snelle bestandsnaamzoekactie pas nadat het tabblad is getoond.
-        self.after(50, lambda item=selected: self._load_derived_candidates(item))
+        self.root.after(50, lambda item=selected: self._load_derived_candidates(item))
 
     def _load_derived_candidates(self, selected):
         if self.delete_selected_item is not selected:
