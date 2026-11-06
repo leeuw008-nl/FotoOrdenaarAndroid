@@ -130,7 +130,7 @@ class App:
         self.map_content_available = False
         self.album_map_path = None
         self.album_map_enabled = tk.BooleanVar(value=True)
-        self.active_tab = "Afbeelding"
+        self.active_tab = "Kaart"
         self.tab_buttons = {}
         self.tab_frames = {}
         self.highlighting_media_album = False
@@ -238,9 +238,9 @@ class App:
         for panel in (image_tab, map_tab, metadata_tab, gallery_tab):
             panel.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.tab_frames = {
-            "Afbeelding": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab
+            "Medium": image_tab, "Kaart": map_tab, "Metadata": metadata_tab, "Gallery": gallery_tab
         }
-        for name, label in (("Afbeelding", "🖼  Afbeelding"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata"), ("Gallery", "▦  Gallery")):
+        for name, label in (("Medium", "🖼  Medium"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata"), ("Gallery", "▦  Gallery")):
             button = tk.Button(
                 tab_bar, text=label, font=("Segoe UI", 12, "bold"),
                 padx=18, pady=9, relief="flat", bd=0,
@@ -248,7 +248,7 @@ class App:
             )
             button.pack(side="left", padx=(0, 3), pady=(0, 2))
             self.tab_buttons[name] = button
-        self.show_tab("Afbeelding")
+        self.show_tab("Medium")
 
         self.preview = ttk.Label(image_tab, text="Selecteer een foto of video", anchor="center")
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
@@ -532,6 +532,7 @@ class App:
         path = self.tree_paths.get(selection[0])
         if path and path.is_dir():
             self.clear_detail_panels()
+            self.set_media_tabs_visible(False)
             self.album_map_path = path
             self.active_folder = path
             self.update_breadcrumb()
@@ -676,6 +677,7 @@ class App:
         except (ValueError, IndexError):
             return
         self.clear_detail_panels()
+        self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
         self.highlight_media_album(media)
@@ -874,7 +876,7 @@ class App:
             self.map_widget.set_position(media.lat, media.lon)
             self.map_widget.set_zoom(16)
             try:
-                self.map_marker = self.map_widget.set_marker(media.lat, media.lon, text=media.path.name)
+                self.map_marker = self.map_widget.set_marker(media.lat, media.lon, text="", command=lambda marker, item=media: self.open_map_media(item))
             except Exception:
                 self.map_marker = None
         else:
@@ -913,7 +915,7 @@ class App:
             for item in points:
                 try:
                     self.map_markers.append(
-                        self.map_widget.set_marker(item.lat, item.lon, text=item.path.name)
+                        self.map_widget.set_marker(item.lat, item.lon, text="", command=lambda marker, media=item: self.open_map_media(media))
                     )
                 except Exception:
                     continue
@@ -931,12 +933,34 @@ class App:
         self.tab_frames[name].tkraise()
         self.update_tab_colors()
 
+    def set_media_tabs_visible(self, visible):
+        """Toon Medium en Metadata alleen wanneer een afzonderlijk medium is geselecteerd."""
+        medium = self.tab_buttons.get("Medium")
+        metadata = self.tab_buttons.get("Metadata")
+        if not medium or not metadata:
+            return
+        if visible:
+            if not medium.winfo_manager():
+                medium.pack(side="left", padx=(0, 3), pady=(0, 2), before=self.tab_buttons["Kaart"])
+            if not metadata.winfo_manager():
+                metadata.pack(side="left", padx=(0, 3), pady=(0, 2), before=self.tab_buttons["Gallery"])
+        else:
+            medium.pack_forget()
+            metadata.pack_forget()
+            if self.active_tab in ("Medium", "Metadata"):
+                self.show_tab("Kaart")
+
+    def open_map_media(self, media):
+        """Open het medium waarop de gebruiker op de kaartspeld klikt."""
+        self.set_media_tabs_visible(True)
+        self.select_gallery_item(media)
+
     def update_tab_colors(self):
         if not self.tab_buttons:
             return
         media = self.selected
         available = {
-            "Afbeelding": media is not None,
+            "Medium": media is not None,
             "Kaart": bool(getattr(self, "map_content_available", False)),
             "Metadata": media is not None and any((
                 media.capture is not None, media.lat is not None, media.lon is not None,
