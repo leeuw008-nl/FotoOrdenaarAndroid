@@ -175,7 +175,9 @@ class App:
         panes.add(left, weight=5)
         panes.add(right, weight=6)
 
-        left_split = ttk.Panedwindow(left, orient="vertical")
+        # Albums en bestanden blijven samen in hetzelfde hoofdvenster,
+        # naast elkaar zoals de gecombineerde navigatie in Android.
+        left_split = ttk.Panedwindow(left, orient="horizontal")
         left_split.pack(fill="both", expand=True)
         albums = ttk.Frame(left_split)
         media_list = ttk.Frame(left_split)
@@ -213,21 +215,31 @@ class App:
         self.table.bind("<<TreeviewSelect>>", self.select)
         self.table.bind("<Double-1>", self.open_file)
 
-        self.tabs = ttk.Notebook(right)
+        style = ttk.Style(self.root)
+        style.configure("FotoVerkenner.TNotebook.Tab", font=("Segoe UI", 12, "bold"), padding=(16, 10))
+        self.tabs = ttk.Notebook(right, style="FotoVerkenner.TNotebook")
         self.tabs.pack(fill="both", expand=True)
         image_tab = ttk.Frame(self.tabs)
         map_tab = ttk.Frame(self.tabs)
-        self.tabs.add(image_tab, text="🖼 Afbeelding")
-        self.tabs.add(map_tab, text="📍 Kaart")
+        metadata_tab = ttk.Frame(self.tabs)
+        self.tabs.add(image_tab, text="🖼  Afbeelding")
+        self.tabs.add(map_tab, text="📍  Kaart")
+        self.tabs.add(metadata_tab, text="ℹ  Metadata")
 
         self.preview = ttk.Label(image_tab, text="Selecteer een foto of video", anchor="center")
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         self.preview.bind("<Configure>", self.resize_preview)
-        self.details = tk.Text(image_tab, height=5, wrap="word", state="disabled")
-        self.details.pack(fill="x", padx=6, pady=(0, 6))
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file).pack(side="left")
+
+        metadata_heading = ttk.Label(
+            metadata_tab, text="Metadata van geselecteerd bestand",
+            font=("Segoe UI", 11, "bold")
+        )
+        metadata_heading.pack(anchor="w", padx=10, pady=(10, 4))
+        self.details = tk.Text(metadata_tab, wrap="word", state="disabled", font=("Segoe UI", 10))
+        self.details.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         if tkintermapview is not None:
             self.map_widget = tkintermapview.TkinterMapView(map_tab, corner_radius=0)
@@ -581,7 +593,7 @@ class App:
             return
         try:
             width = max(200, self.preview.winfo_width() - 20)
-            height = max(180, self.preview.winfo_height() - self.details.winfo_height() - 45)
+            height = max(180, self.preview.winfo_height() - 24)
             with Image.open(media.path) as image:
                 image = ImageOps.exif_transpose(image)
                 image.thumbnail((width, height), Image.Resampling.LANCZOS)
