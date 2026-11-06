@@ -322,7 +322,7 @@ class App:
         root_id = str(self.folder)
         self.tree_paths[root_id] = self.folder
         self.album_tree.insert("", "end", iid=root_id, text=f"📁 {self.folder.name}", open=True)
-        self.add_album_placeholder(root_id, self.folder)
+        self.populate_album_node(root_id)
         self.album_tree.selection_set(root_id)
         self.album_tree.focus(root_id)
         self.expand_button.configure(text="Alles uitklappen")
