@@ -1102,12 +1102,12 @@ class App:
 
     @staticmethod
     def filename_suffix_key(path):
-        """Laatste zes letters/cijfers uit de bestandsnaam, bijvoorbeeld HHMMSS."""
-        stem = re.sub(r"[^0-9A-Za-z]", "", Path(path).stem).lower()
-        return stem[-6:] if len(stem) >= 6 else ""
+        """Neem exact de laatste zes tekens van de bestandsnaam, zonder extensie."""
+        stem = Path(path).stem
+        return stem[-6:].casefold() if len(stem) >= 6 else ""
 
     def find_derived_media(self, selected):
-        """Zoek foto's met dezelfde laatste zes bestandsnaamtekens."""
+        """Zoek foto's waarvan de laatste zes bestandsnaamtekens exact gelijk zijn."""
         album = self.active_folder or self.folder
         if not album:
             return []
@@ -1120,13 +1120,11 @@ class App:
                 continue
             if album not in candidate.path.parents:
                 continue
-            candidate_name = re.sub(
-                r"[^0-9A-Za-z]", "", candidate.path.stem
-            ).lower()
-            if suffix in candidate_name:
+            candidate_suffix = self.filename_suffix_key(candidate.path)
+            if candidate_suffix == suffix:
                 matches.append((
                     candidate,
-                    f"Bestandsnaam bevat dezelfde tijdcode: {suffix}",
+                    f"Laatste zes tekens gelijk: {suffix}",
                     False
                 ))
         return matches
@@ -1203,7 +1201,17 @@ class App:
                 thumb.image = photo
         except Exception:
             pass
-        ttk.Label(tile, text=media.path.name, wraplength=220, justify="center").pack(fill="x", pady=(5, 2))
+        # Een readonly invoerveld maakt de volledige bestandsnaam selecteerbaar en kopieerbaar.
+        filename_field = tk.Entry(
+            tile, relief="flat", justify="center", state="readonly",
+            readonlybackground=tile.cget("background"),
+            font=("Segoe UI", 9)
+        )
+        filename_field.pack(fill="x", pady=(5, 2))
+        filename_field.configure(state="normal")
+        filename_field.insert(0, media.path.name)
+        filename_field.configure(state="readonly")
+        filename_field.bind("<Control-a>", lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1])
         ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
         ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
