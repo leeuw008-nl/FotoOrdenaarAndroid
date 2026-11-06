@@ -325,6 +325,8 @@ class App:
         x_scroll.pack(side="bottom", fill="x")
         self.table.bind("<<TreeviewSelect>>", self.select)
         self.table.bind("<Double-1>", self.open_file)
+        self.table.bind("<Control-c>", self.copy_selected_filename)
+        self.table.bind("<Button-3>", self.show_filename_context_menu)
 
         tab_bar = tk.Frame(right, bg="#e5e7eb")
         tab_bar.pack(fill="x")
@@ -806,6 +808,42 @@ class App:
         }.get(column, "Bestandsdatum"))
         self.filter()
 
+    def copy_selected_filename(self, _event=None):
+        selection = self.table.selection()
+        if not selection:
+            return "break"
+        try:
+            media = self.filtered[int(selection[0])]
+        except (ValueError, IndexError):
+            return "break"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(media.path.name)
+        self.status.set("Bestandsnaam gekopieerd: " + media.path.name)
+        return "break"
+
+    def show_filename_context_menu(self, event):
+        row = self.table.identify_row(event.y)
+        if not row:
+            return
+        self.table.selection_set(row)
+        self.table.focus(row)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Kopieer bestandsnaam", command=self.copy_selected_filename)
+        menu.add_command(
+            label="Kopieer volledig pad",
+            command=lambda: self._copy_path_for_row(row)
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy_path_for_row(self, row):
+        try:
+            media = self.filtered[int(row)]
+        except (ValueError, IndexError):
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(str(media.path))
+        self.status.set("Volledig pad gekopieerd.")
+
     def select(self, _event=None):
         selection = self.table.selection()
         if not selection:
@@ -1231,7 +1269,9 @@ class App:
             selected, "Geselecteerde bestand — wordt verwijderd", mandatory=True
         )
         self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
-        self.delete_count.configure(text=f"{len(matches) + 1} bestanden (inclusief geselecteerde)")
+        self.delete_count.configure(
+            text=f"{len(matches) + 1} bestanden gevonden; {len(self.items)} bestanden doorzocht"
+        )
         self.delete_confirm_button.configure(state="normal")
         for candidate, reason, _strong_name in matches:
             variable = tk.BooleanVar(value=False)
