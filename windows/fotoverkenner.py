@@ -795,7 +795,7 @@ class App:
             self.root.after(200, lambda: setattr(self, "highlighting_media_album", False))
 
     def resize_preview(self, _event=None):
-        if self.selected and not self.selected.is_video:
+        if self.selected:
             self.render_preview()
 
     def gallery_resize(self, event=None):
@@ -842,9 +842,9 @@ class App:
             self.gallery_thumb_labels[media.path] = thumb
             cached = self.gallery_thumb_cache.get(media.path)
             if cached is not None:
-                    photo = ImageTk.PhotoImage(cached)
-                    thumb.configure(image=photo, text="", width=160, height=110)
-                    thumb.image = photo
+                photo = ImageTk.PhotoImage(cached)
+                thumb.configure(image=photo, text="", width=160, height=110)
+                thumb.image = photo
             else:
                 threading.Thread(target=self.load_gallery_thumbnail, args=(generation, media.path), name="GalleryThumb-" + str(generation), daemon=True).start()
         self.layout_gallery()
