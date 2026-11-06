@@ -126,6 +126,11 @@ class App:
         self.preview_photo = None
         self.map_widget = None
         self.map_marker = None
+        self.map_markers = []
+        self.album_map_enabled = tk.BooleanVar(value=False)
+        self.active_tab = "Afbeelding"
+        self.tab_buttons = {}
+        self.tab_frames = {}
         self.highlighting_media_album = False
         self.tree_paths: dict[str, Path] = {}
         self.scan_queue = queue.Queue()
@@ -216,16 +221,27 @@ class App:
         self.table.bind("<<TreeviewSelect>>", self.select)
         self.table.bind("<Double-1>", self.open_file)
 
-        style = ttk.Style(self.root)
-        style.configure("FotoVerkenner.TNotebook.Tab", font=("Segoe UI", 12, "bold"), padding=(16, 10))
-        self.tabs = ttk.Notebook(right, style="FotoVerkenner.TNotebook")
-        self.tabs.pack(fill="both", expand=True)
-        image_tab = ttk.Frame(self.tabs)
-        map_tab = ttk.Frame(self.tabs)
-        metadata_tab = ttk.Frame(self.tabs)
-        self.tabs.add(image_tab, text="🖼  Afbeelding")
-        self.tabs.add(map_tab, text="📍  Kaart")
-        self.tabs.add(metadata_tab, text="ℹ  Metadata")
+        tab_bar = tk.Frame(right, bg="#e5e7eb")
+        tab_bar.pack(fill="x")
+        tab_body = ttk.Frame(right)
+        tab_body.pack(fill="both", expand=True)
+        image_tab = ttk.Frame(tab_body)
+        map_tab = ttk.Frame(tab_body)
+        metadata_tab = ttk.Frame(tab_body)
+        for panel in (image_tab, map_tab, metadata_tab):
+            panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.tab_frames = {
+            "Afbeelding": image_tab, "Kaart": map_tab, "Metadata": metadata_tab
+        }
+        for name, label in (("Afbeelding", "🖼  Afbeelding"), ("Kaart", "📍  Kaart"), ("Metadata", "ℹ  Metadata")):
+            button = tk.Button(
+                tab_bar, text=label, font=("Segoe UI", 12, "bold"),
+                padx=18, pady=9, relief="flat", bd=0,
+                command=lambda target=name: self.show_tab(target)
+            )
+            button.pack(side="left", padx=(0, 3), pady=(0, 2))
+            self.tab_buttons[name] = button
+        self.show_tab("Afbeelding")
 
         self.preview = ttk.Label(image_tab, text="Selecteer een foto of video", anchor="center")
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
@@ -246,9 +262,11 @@ class App:
             self.map_widget = tkintermapview.TkinterMapView(map_tab, corner_radius=0)
             # Gebruik CARTO-kaarttegels in plaats van de standaard OSM-tegelserver,
             # die op sommige netwerken een Access blocked-melding geeft.
+            # OSM-Duitsland levert openbare rastertegels zonder API-sleutel.
+            # De CARTO-endpoint gaf bij sommige installaties "API key required".
             self.map_widget.set_tile_server(
-                "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-                max_zoom=20
+                "https://tile.openstreetmap.de/{z}/{x}/{y}.png",
+                max_zoom=19
             )
             self.map_widget.pack(fill="both", expand=True, padx=6, pady=6)
             self.map_widget.set_position(52.519142, 6.423672)
@@ -261,9 +279,14 @@ class App:
             ).pack(fill="both", expand=True)
         map_actions = ttk.Frame(map_tab)
         map_actions.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Label(map_actions, text="Kaarttegels: CARTO · © OpenStreetMap").pack(side="right", padx=8)
+        ttk.Label(map_actions, text="Kaarttegels: OpenStreetMap Deutschland · © OpenStreetMap").pack(side="right", padx=8)
         ttk.Button(map_actions, text="Open in Google Maps", command=self.open_external_map).pack(side="left")
         ttk.Button(map_actions, text="Locatie zoeken", command=self.lookup).pack(side="left", padx=6)
+        ttk.Checkbutton(
+            map_actions, text="Album automatisch op kaart",
+            variable=self.album_map_enabled
+        ).pack(side="left", padx=(12, 4))
+        ttk.Button(map_actions, text="Toon albumspelden", command=self.show_album_on_map).pack(side="left", padx=4)
 
         ttk.Label(
             self.root, textvariable=self.status, relief="sunken", anchor="w", padding=5
@@ -432,6 +455,8 @@ class App:
             self.active_folder = path
             self.update_breadcrumb()
             self.filter()
+            if self.album_map_enabled.get():
+                self.show_album_on_map(path, switch_tab=True)
 
     def update_breadcrumb(self):
         if not hasattr(self, "breadcrumb_bar"):
@@ -589,6 +614,7 @@ class App:
         self.details.configure(state="disabled")
         self.render_preview()
         self.update_map()
+        self.update_tab_colors()
 
     def highlight_media_album(self, media):
         """Markeer de map van het gekozen bestand zonder de huidige bestandenlijst te filteren."""
@@ -641,16 +667,29 @@ class App:
             self.preview.configure(image="", text="Voorbeeld niet beschikbaar")
             self.preview_photo = None
 
+    def clear_map_markers(self):
+        if self.map_marker:
+            try:
+                self.map_marker.delete()
+            except Exception:
+                pass
+        self.map_marker = None
+        for marker in self.map_markers:
+            try:
+                marker.delete()
+            except Exception:
+                pass
+        self.map_markers = []
+
     def update_map(self):
         if not self.map_widget:
             return
         media = self.selected
+        self.clear_map_markers()
         if media and media.lat is not None and media.lon is not None:
             self.map_widget.set_position(media.lat, media.lon)
             self.map_widget.set_zoom(16)
             try:
-                if self.map_marker:
-                    self.map_marker.delete()
                 self.map_marker = self.map_widget.set_marker(
                     media.lat, media.lon, text=media.path.name
                 )
@@ -659,15 +698,80 @@ class App:
         else:
             self.map_widget.set_position(52.519142, 6.423672)
             self.map_widget.set_zoom(7)
-            try:
-                if self.map_marker:
-                    self.map_marker.delete()
-                self.map_marker = None
-            except Exception:
-                pass
+        self.update_tab_colors()
+
+    def show_album_on_map(self, path=None, switch_tab=True):
+        if not self.map_widget:
+            messagebox.showwarning("Kaart", "De kaartmodule is niet beschikbaar.")
+            return
+        album = path or self.active_folder or self.folder
+        if not album:
+            return
+        points = [
+            item for item in self.items
+            if (item.path.parent == album or album in item.path.parents)
+            and item.lat is not None and item.lon is not None
+        ]
+        self.clear_map_markers()
+        if not points:
+            self.map_widget.set_position(52.519142, 6.423672)
+            self.map_widget.set_zoom(7)
+            self.status.set(f"Geen GPS-locaties gevonden in album {album.name}.")
+        else:
+            latitudes = [item.lat for item in points]
+            longitudes = [item.lon for item in points]
+            center_lat = sum(latitudes) / len(latitudes)
+            center_lon = sum(longitudes) / len(longitudes)
+            self.map_widget.set_position(center_lat, center_lon)
+            self.map_widget.set_zoom(16 if len(points) == 1 else 12)
+            for item in points:
+                try:
+                    marker = self.map_widget.set_marker(
+                        item.lat, item.lon, text=item.path.name
+                    )
+                    self.map_markers.append(marker)
+                except Exception:
+                    continue
+            self.status.set(f"{len(self.map_markers)} GPS-spelden getoond voor album {album.name}.")
+        if switch_tab:
+            self.show_tab("Kaart")
+        self.update_tab_colors()
+
+    def show_tab(self, name):
+        if name not in self.tab_frames:
+            return
+        self.active_tab = name
+        self.tab_frames[name].tkraise()
+        self.update_tab_colors()
+
+    def update_tab_colors(self):
+        if not self.tab_buttons:
+            return
+        media = self.selected
+        available = {
+            "Afbeelding": media is not None,
+            "Kaart": any(item.lat is not None and item.lon is not None for item in self.items),
+            "Metadata": media is not None and any((
+                media.capture is not None, media.lat is not None,
+                media.lon is not None, bool(media.camera),
+                media.width is not None, media.height is not None,
+                media.is_video
+            ))
+        }
+        for name, button in self.tab_buttons.items():
+            if name == self.active_tab:
+                bg, fg = "#16803c", "#ffffff"
+            elif available[name]:
+                bg, fg = "#b7e4c7", "#14532d"
+            else:
+                bg, fg = "#e5e7eb", "#4b5563"
+            button.configure(
+                bg=bg, fg=fg, activebackground="#86c99d",
+                activeforeground="#123b22", highlightthickness=0
+            )
 
     def map(self):
-        self.tabs.select(1)
+        self.show_tab("Kaart")
         self.update_map()
 
     def open_external_map(self):
