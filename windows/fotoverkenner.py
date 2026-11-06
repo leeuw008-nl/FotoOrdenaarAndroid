@@ -283,17 +283,18 @@ class App:
         filename_bar = ttk.Frame(media_list)
         filename_bar.pack(fill="x", pady=(0, 4))
         ttk.Label(filename_bar, text="Bestandsnaam:").pack(side="left", padx=(0, 5))
-        self.filename_var = tk.StringVar(value="")
-        self.filename_entry = tk.Entry(
-            filename_bar, textvariable=self.filename_var, state="normal",
-            exportselection=False, relief="solid", bd=1, font=("Segoe UI", 9)
+        self.filename_entry = tk.Text(
+            filename_bar, height=1, wrap="none", undo=False,
+            exportselection=False, relief="solid", bd=1,
+            font=("Segoe UI", 9), padx=4, pady=2
         )
         self.filename_entry.pack(side="left", fill="x", expand=True)
         self.filename_entry.bind("<KeyPress>", self._protect_filename_entry)
         self.filename_entry.bind(
             "<Control-a>",
-            lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1]
+            lambda event: (self.filename_entry.tag_add("sel", "1.0", "end-1c"), "break")[1]
         )
+        self.filename_entry.configure(state="disabled")
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -446,8 +447,10 @@ class App:
     def clear_detail_panels(self):
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
-        if hasattr(self, "filename_var"):
-            self.filename_var.set("")
+        if hasattr(self, "filename_entry"):
+            self.filename_entry.configure(state="normal")
+            self.filename_entry.delete("1.0", "end")
+            self.filename_entry.configure(state="disabled")
         if hasattr(self, "delete_button"):
             self.delete_button.configure(state="disabled")
         self.preview_photo = None
@@ -803,7 +806,10 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
-        self.filename_var.set(media.path.name)
+        self.filename_entry.configure(state="normal")
+        self.filename_entry.delete("1.0", "end")
+        self.filename_entry.insert("1.0", media.path.name)
+        self.filename_entry.configure(state="disabled")
         self.delete_button.configure(state="normal")
         self.highlight_media_album(media)
         lines = [
@@ -1134,27 +1140,33 @@ class App:
 
     @staticmethod
     def filename_match_keys(path):
-        """Alle aaneengesloten reeksen van vijf tekens uit de naam, zonder extensie."""
+        """Alle reeksen van vijf opeenvolgende tekens uit de bestandsnaam (zonder extensie)."""
         name = Path(path).stem.casefold()
-        return {name[index:index + 5] for index in range(max(0, len(name) - 4))}
+        return {
+            name[index:index + 5]
+            for index in range(len(name) - 4)
+            if name[index:index + 5].strip()
+        }
 
     def find_derived_media(self, selected):
-        """Zoek alle gescande media met een gedeelde reeks van vijf filename-tekens."""
+        """Vergelijk de naam van het gekozen bestand met de namen van alle geïnventariseerde media."""
         selected_keys = self.filename_match_keys(selected.path)
         if not selected_keys:
             return []
         matches = []
+        # Gebruik bewust self.items (de volledige inventaris), niet self.filtered:
+        # album-, datum- en zoekfilters mogen andere mappen niet uitsluiten.
         for candidate in self.items:
             if candidate.path == selected.path:
                 continue
-            candidate_keys = self.filename_match_keys(candidate.path)
-            common = sorted(selected_keys.intersection(candidate_keys))
+            common = selected_keys.intersection(self.filename_match_keys(candidate.path))
             if common:
                 matches.append((
                     candidate,
-                    "Gedeelde reeks van vijf tekens: " + ", ".join(common[:3]),
+                    "Gedeelde reeks van vijf tekens: " + ", ".join(sorted(common)[:5]),
                     False
                 ))
+        matches.sort(key=lambda row: (row[0].path.name.casefold(), str(row[0].path.parent).casefold()))
         return matches
 
     def delete_selected_media(self):
@@ -1249,18 +1261,19 @@ class App:
                 thumb.image = photo
         except Exception:
             pass
-        # Een readonly invoerveld maakt de volledige bestandsnaam selecteerbaar en kopieerbaar.
-        filename_field = tk.Entry(
-            tile, relief="flat", justify="center", state="normal",
-            exportselection=False, font=("Segoe UI", 9)
+        # Een Tk Text-veld ondersteunt echte muisselectie van de volledige naam.
+        filename_field = tk.Text(
+            tile, height=1, wrap="none", relief="flat",
+            exportselection=False, font=("Segoe UI", 9), padx=2, pady=1
         )
         filename_field.pack(fill="x", pady=(5, 2))
-        filename_field.insert(0, media.path.name)
+        filename_field.insert("1.0", media.path.name)
         filename_field.bind("<KeyPress>", self._protect_filename_entry)
         filename_field.bind(
             "<Control-a>",
-            lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1]
+            lambda event, field=filename_field: (field.tag_add("sel", "1.0", "end-1c"), "break")[1]
         )
+        filename_field.configure(state="disabled")
         ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
         ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
