@@ -1101,18 +1101,18 @@ class App:
         return stem
 
     @staticmethod
-    def filename_suffix_key(path):
-        """Neem exact de laatste zes tekens van de bestandsnaam, zonder extensie."""
-        stem = Path(path).stem
-        return stem[-6:].casefold() if len(stem) >= 6 else ""
+    def filename_match_keys(path):
+        """Alle aaneengesloten reeksen van vijf tekens uit de naam, zonder extensie."""
+        name = Path(path).stem.casefold()
+        return {name[index:index + 5] for index in range(max(0, len(name) - 4))}
 
     def find_derived_media(self, selected):
-        """Zoek foto's waarvan de laatste zes bestandsnaamtekens exact gelijk zijn."""
+        """Zoek foto's met minimaal één reeks van vijf opeenvolgende gelijke tekens in de filename."""
         album = self.active_folder or self.folder
         if not album:
             return []
-        suffix = self.filename_suffix_key(selected.path)
-        if not suffix:
+        selected_keys = self.filename_match_keys(selected.path)
+        if not selected_keys:
             return []
         matches = []
         for candidate in self.items:
@@ -1120,11 +1120,12 @@ class App:
                 continue
             if album not in candidate.path.parents:
                 continue
-            candidate_suffix = self.filename_suffix_key(candidate.path)
-            if candidate_suffix == suffix:
+            candidate_name = candidate.path.stem.casefold()
+            common = sorted(key for key in selected_keys if key in candidate_name)
+            if common:
                 matches.append((
                     candidate,
-                    f"Laatste zes tekens gelijk: {suffix}",
+                    "Gedeelde reeks van vijf tekens: " + ", ".join(common[:3]),
                     False
                 ))
         return matches
