@@ -503,6 +503,7 @@ class App:
         self.render_generation += 1
         generation = self.render_generation
         self.table.delete(*self.table.get_children())
+        self.render_offset = 0
         self.render_filter_batch(generation, active)
 
     def render_filter_batch(self, generation, active):
