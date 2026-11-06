@@ -302,7 +302,10 @@ class App:
                 padx=18, pady=9, relief="flat", bd=0,
                 command=lambda target=name: self.show_tab(target)
             )
-            button.pack(side="left", padx=(0, 3), pady=(0, 2))
+            if name == "Verwijderen":
+                button.pack(side="right", padx=(3, 0), pady=(0, 2))
+            else:
+                button.pack(side="left", padx=(0, 3), pady=(0, 2))
             self.tab_buttons[name] = button
         self.show_tab("Medium")
 
@@ -1098,170 +1101,34 @@ class App:
         return stem
 
     @staticmethod
-    def image_analysis_data(path):
-        """Bereken SIFT-kenmerken voor de hele foto en beide stereohelften."""
-        if cv2 is None:
-            return None
-        try:
-            with Image.open(path) as source:
-                image = ImageOps.exif_transpose(source).convert("RGB")
-                image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-                rgb = image.copy()
-            import numpy as np
-
-            def describe(region, label):
-                gray = cv2.cvtColor(np.asarray(region), cv2.COLOR_RGB2GRAY)
-                sift = cv2.SIFT_create(nfeatures=2200, contrastThreshold=0.025)
-                keypoints, descriptors = sift.detectAndCompute(gray, None)
-                return {
-                    "label": label,
-                    "keypoints": keypoints,
-                    "descriptors": descriptors,
-                    "width": gray.shape[1],
-                    "height": gray.shape[0],
-                }
-
-            width, height = rgb.size
-            variants = [describe(rgb, "volledig")]
-            # Een stereo-opname kan bestaan uit twee naast elkaar geplaatste beelden.
-            # Vergelijk beide helften ook afzonderlijk met volledige foto's en uitsneden.
-            if width >= 240 and height >= 120:
-                middle = width // 2
-                variants.append(describe(rgb.crop((0, 0, middle, height)), "linkerhelft"))
-                variants.append(describe(rgb.crop((middle, 0, width, height)), "rechterhelft"))
-
-            gray = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2GRAY)
-            small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
-            dct = cv2.dct(small)
-            low = dct[:8, :8].flatten()[1:]
-            median = float(np.median(low))
-            phash = 0
-            for bit in (low > median):
-                phash = (phash << 1) | int(bit)
-            return {"phash": phash, "variants": variants}
-        except Exception:
-            return None
-
-    @staticmethod
-    def compare_image_content(first, second):
-        """Zoek geometrisch bevestigde overlap tussen hele foto's en stereohelften."""
-        if not first or not second:
-            return None
-        distance = (first["phash"] ^ second["phash"]).bit_count()
-        best = {
-            "distance": distance, "inliers": 0, "ratio": 0.0,
-            "coverage_a": 0.0, "coverage_b": 0.0,
-            "variant_a": "volledig", "variant_b": "volledig",
-        }
-        try:
-            import numpy as np
-            matcher = cv2.BFMatcher(cv2.NORM_L2)
-            for variant_a in first.get("variants", []):
-                a = variant_a.get("descriptors")
-                if a is None or len(a) < 4:
-                    continue
-                for variant_b in second.get("variants", []):
-                    b = variant_b.get("descriptors")
-                    if b is None or len(b) < 4:
-                        continue
-                    pairs = matcher.knnMatch(a, b, k=2)
-                    good = []
-                    used_train = set()
-                    for pair in pairs:
-                        if len(pair) != 2:
-                            continue
-                        m, n = pair
-                        if m.distance < 0.72 * n.distance and m.trainIdx not in used_train:
-                            good.append(m)
-                            used_train.add(m.trainIdx)
-                    if len(good) < 12:
-                        continue
-                    points_a, points_b = variant_a["keypoints"], variant_b["keypoints"]
-                    src = np.float32([points_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-                    dst = np.float32([points_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-                    matrix, mask = cv2.findHomography(src, dst, cv2.RANSAC, 4.0)
-                    if mask is None or matrix is None:
-                        continue
-                    inlier_mask = mask.ravel().astype(bool)
-                    inliers = int(inlier_mask.sum())
-                    if not inliers:
-                        continue
-                    inlier_src, inlier_dst = src[inlier_mask], dst[inlier_mask]
-                    area_a = max(1.0, float(variant_a["width"] * variant_a["height"]))
-                    area_b = max(1.0, float(variant_b["width"] * variant_b["height"]))
-                    coverage_a = cv2.contourArea(cv2.convexHull(inlier_src)) / area_a
-                    coverage_b = cv2.contourArea(cv2.convexHull(inlier_dst)) / area_b
-                    ratio = inliers / max(1, len(good))
-                    # Bij uitsneden is de dekking in de volledige foto klein.
-                    # Daarom toetsen we beide dekkingen, maar niet met dezelfde ondergrens.
-                    if (inliers >= 12 and ratio >= 0.38
-                            and max(coverage_a, coverage_b) >= 0.04
-                            and min(coverage_a, coverage_b) >= 0.004):
-                        score = inliers * ratio * (max(coverage_a, coverage_b) ** 0.5)
-                        old_score = best["inliers"] * best["ratio"] * (
-                            max(best["coverage_a"], best["coverage_b"]) ** 0.5
-                        )
-                        if score > old_score:
-                            best.update({
-                                "inliers": inliers, "ratio": ratio,
-                                "coverage_a": coverage_a, "coverage_b": coverage_b,
-                                "variant_a": variant_a["label"],
-                                "variant_b": variant_b["label"],
-                            })
-        except Exception:
-            return best
-        return best
+    def filename_suffix_key(path):
+        """Laatste zes letters/cijfers uit de bestandsnaam, bijvoorbeeld HHMMSS."""
+        stem = re.sub(r"[^0-9A-Za-z]", "", Path(path).stem).lower()
+        return stem[-6:] if len(stem) >= 6 else ""
 
     def find_derived_media(self, selected):
-        """Zoek naamvarianten, uitsneden en stereo-overlap in album en subalbums."""
+        """Zoek foto's met dezelfde laatste zes bestandsnaamtekens."""
         album = self.active_folder or self.folder
         if not album:
             return []
-        base = self.normalized_media_stem(selected.path)
+        suffix = self.filename_suffix_key(selected.path)
+        if not suffix:
+            return []
         matches = []
-        selected_data = None
         for candidate in self.items:
-            if candidate.path == selected.path or album not in candidate.path.parents:
+            if candidate.path == selected.path or candidate.is_video:
                 continue
-            reason = ""
-            strong_name = False
-            candidate_base = self.normalized_media_stem(candidate.path)
-            if candidate_base == base:
-                reason = "Zelfde basisnaam / bestandsvariant"
-                strong_name = candidate.path.stem.lower() != selected.path.stem.lower()
-                if not strong_name:
-                    reason = "Zelfde basisnaam in andere map"
-
-            if not selected.is_video and not candidate.is_video and candidate.size >= 4096:
-                if selected_data is None:
-                    selected_data = self.image_analysis_data(selected.path)
-                candidate_data = self.image_analysis_data(candidate.path)
-                comparison = self.compare_image_content(selected_data, candidate_data)
-                if comparison:
-                    distance = comparison["distance"]
-                    inliers = comparison["inliers"]
-                    ratio = comparison["ratio"]
-                    coverage_a = comparison["coverage_a"]
-                    coverage_b = comparison["coverage_b"]
-                    if inliers >= 12:
-                        partial = min(coverage_a, coverage_b) < 0.025
-                        stereo = ("helft" in comparison["variant_a"]
-                                  or "helft" in comparison["variant_b"])
-                        if stereo:
-                            kind = "Stereo-overeenkomst"
-                        elif partial:
-                            kind = "Gedeeltelijke beeldoverlap"
-                        else:
-                            kind = "Beeldovereenkomst"
-                        content_reason = (
-                            f"{kind}: {inliers} SIFT-punten ({ratio:.0%}); "
-                            f"{comparison['variant_a']} ↔ {comparison['variant_b']}"
-                        )
-                        reason = content_reason if not reason else reason + " · " + content_reason
-                    elif distance <= 3 and not reason:
-                        reason = f"Bijna identiek beeld: pHash-afstand {distance}/63"
-            if reason:
-                matches.append((candidate, reason, strong_name))
+            if album not in candidate.path.parents:
+                continue
+            candidate_name = re.sub(
+                r"[^0-9A-Za-z]", "", candidate.path.stem
+            ).lower()
+            if suffix in candidate_name:
+                matches.append((
+                    candidate,
+                    f"Bestandsnaam bevat dezelfde tijdcode: {suffix}",
+                    False
+                ))
         return matches
 
     def delete_selected_media(self):
@@ -1278,29 +1145,38 @@ class App:
         for child in self.delete_inner.winfo_children():
             child.destroy()
 
-        # Open het vijfde tabblad direct; het zoeken naar afgeleide bestanden
-        # kan enige tijd duren bij grote albums.
-        self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
-        self.delete_count.configure(text="Kandidaten zoeken…")
+        # Toon eerst direct de gekozen foto in het tabblad Verwijderen.
+        self.delete_heading.configure(text="Geselecteerde foto: " + selected.path.name)
+        self.delete_count.configure(text="Foto wordt getoond…")
         self.delete_confirm_button.configure(state="disabled")
+        self._add_delete_candidate_tile(
+            selected, "Geselecteerde bestand — wordt verwijderd", mandatory=True
+        )
         self.show_tab("Verwijderen")
+        self.update_idletasks()
 
+        # Start de snelle bestandsnaamzoekactie pas nadat het tabblad is getoond.
+        self.after(50, lambda item=selected: self._load_derived_candidates(item))
+
+    def _load_derived_candidates(self, selected):
+        if self.delete_selected_item is not selected:
+            return
+        self.delete_count.configure(text="Zoeken op laatste zes tekens…")
         matches = self.find_derived_media(selected)
+        if self.delete_selected_item is not selected:
+            return
         self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
         self.delete_count.configure(text=f"{len(matches) + 1} bestanden")
         self.delete_confirm_button.configure(state="normal")
-
-        # Het oorspronkelijk geselecteerde bestand staat als vaste, verplichte tegel.
-        self._add_delete_candidate_tile(selected, "Geselecteerd bestand — wordt verwijderd", mandatory=True)
-        for candidate, reason, strong_name in matches:
+        for candidate, reason, _strong_name in matches:
             variable = tk.BooleanVar(value=False)
             self._add_delete_candidate_tile(candidate, reason, variable=variable)
             self.delete_candidate_choices.append((candidate, variable))
-
         if not matches:
-            ttk.Label(self.delete_inner, text="Geen aanvullende afgeleide media gevonden.").grid(
+            ttk.Label(self.delete_inner, text="Geen andere foto's met dezelfde laatste zes tekens gevonden.").grid(
                 row=1, column=0, sticky="w", padx=12, pady=12
             )
+        self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all"))
         self.show_tab("Verwijderen")
 
     def _add_delete_candidate_tile(self, media, reason, variable=None, mandatory=False):
