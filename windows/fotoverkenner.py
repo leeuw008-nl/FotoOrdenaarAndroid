@@ -829,7 +829,7 @@ class App:
         self.table.focus(str(index))
         self.table.see(str(index))
         self.select()
-        self.show_tab("Afbeelding")
+        self.show_tab("Medium")
 
     def render_preview(self):
 
