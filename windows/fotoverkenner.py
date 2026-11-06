@@ -199,6 +199,19 @@ class App:
         self.render_generation = 0
         self.build_ui()
 
+    @staticmethod
+    def _protect_filename_entry(event):
+        """Laat selecteren/kopieren toe, maar voorkom dat de bestandsnaam wordt gewijzigd."""
+        key = event.keysym
+        if event.state & 0x4 and key.lower() in ("a", "c", "insert"):
+            return None
+        if key in (
+            "Shift_L", "Shift_R", "Control_L", "Control_R",
+            "Left", "Right", "Home", "End", "Escape"
+        ):
+            return None
+        return "break"
+
     def build_ui(self):
         top = ttk.Frame(self.root, padding=(10, 8))
         top.pack(fill="x")
@@ -272,10 +285,11 @@ class App:
         ttk.Label(filename_bar, text="Bestandsnaam:").pack(side="left", padx=(0, 5))
         self.filename_var = tk.StringVar(value="")
         self.filename_entry = tk.Entry(
-            filename_bar, textvariable=self.filename_var, state="readonly",
-            relief="solid", bd=1, font=("Segoe UI", 9)
+            filename_bar, textvariable=self.filename_var, state="normal",
+            exportselection=False, relief="solid", bd=1, font=("Segoe UI", 9)
         )
         self.filename_entry.pack(side="left", fill="x", expand=True)
+        self.filename_entry.bind("<KeyPress>", self._protect_filename_entry)
         self.filename_entry.bind(
             "<Control-a>",
             lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1]
@@ -1167,8 +1181,18 @@ class App:
         self.show_tab("Verwijderen")
         self.update_idletasks()
 
-        # Start de snelle bestandsnaamzoekactie pas nadat het tabblad is getoond.
-        self.root.after(50, lambda item=selected: self._load_derived_candidates(item))
+        # Zoek direct: de gekozen foto moet meteen zichtbaar zijn en mag niet
+        # afhankelijk zijn van een uitgestelde Tk-callback.
+        try:
+            self._load_derived_candidates(selected)
+        except Exception as error:
+            self.delete_count.configure(text="Zoeken mislukt")
+            self.delete_confirm_button.configure(state="disabled")
+            messagebox.showerror(
+                "Verwijderen",
+                f"De geselecteerde foto is geplaatst, maar zoeken naar afgeleide media is mislukt:\\n{error}",
+                parent=self.root
+            )
 
     def _load_derived_candidates(self, selected):
         if self.delete_selected_item is not selected:
@@ -1195,8 +1219,11 @@ class App:
             ttk.Label(self.delete_inner, text="Geen andere media met een gedeelde reeks van vijf bestandsnaamtekens gevonden.").grid(
                 row=1, column=0, sticky="w", padx=12, pady=12
             )
+        self.delete_canvas.update_idletasks()
         self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all"))
+        self.delete_canvas.yview_moveto(0)
         self.show_tab("Verwijderen")
+        self.root.update_idletasks()
 
     def _add_delete_candidate_tile(self, media, reason, variable=None, mandatory=False):
         index = len(self.delete_inner.winfo_children())
@@ -1224,15 +1251,16 @@ class App:
             pass
         # Een readonly invoerveld maakt de volledige bestandsnaam selecteerbaar en kopieerbaar.
         filename_field = tk.Entry(
-            tile, relief="flat", justify="center", state="readonly",
-            readonlybackground="#f0f0f0",
-            font=("Segoe UI", 9)
+            tile, relief="flat", justify="center", state="normal",
+            exportselection=False, font=("Segoe UI", 9)
         )
         filename_field.pack(fill="x", pady=(5, 2))
-        filename_field.configure(state="normal")
         filename_field.insert(0, media.path.name)
-        filename_field.configure(state="readonly")
-        filename_field.bind("<Control-a>", lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1])
+        filename_field.bind("<KeyPress>", self._protect_filename_entry)
+        filename_field.bind(
+            "<Control-a>",
+            lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1]
+        )
         ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
         ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
