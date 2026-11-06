@@ -131,6 +131,7 @@ class App:
         self.scan_generation = 0
         self.scan_running = False
         self.expand_queue = []
+        self.render_generation = 0
         self.build_ui()
 
     def build_ui(self):
@@ -257,7 +258,7 @@ class App:
             self.scan()
 
     def scan(self):
-        if not self.folder or not self.folder.exists() or self.scan_running:
+        if not self.folder or not self.folder.exists():
             return
         self.scan_generation += 1
         generation = self.scan_generation
@@ -499,8 +500,18 @@ class App:
         else:
             result.sort(key=lambda item: item.modified, reverse=True)
         self.filtered = result
+        self.render_generation += 1
+        generation = self.render_generation
         self.table.delete(*self.table.get_children())
-        for index, media in enumerate(result):
+        self.render_filter_batch(generation, active)
+
+    def render_filter_batch(self, generation, active):
+        if generation != self.render_generation:
+            return
+        start = getattr(self, "render_offset", 0)
+        end = min(start + 250, len(self.filtered))
+        for index in range(start, end):
+            media = self.filtered[index]
             date_text = media.date.strftime("%d-%m-%Y %H:%M:%S")
             size = f"{media.size / (1024 * 1024):.1f} MB" if media.size >= 1048576 else f"{media.size / 1024:.0f} KB"
             gps = f"{media.lat:.5f}, {media.lon:.5f}" if media.lat is not None and media.lon is not None else media.place
@@ -509,7 +520,12 @@ class App:
                 "", "end", iid=str(index),
                 values=(f"{icon} {media.path.name}", "Video" if media.is_video else "Foto", date_text, size, gps)
             )
-        self.status.set(f"{len(result)} van {len(self.items)} bestanden weergegeven in {active or 'de fotomap'}.")
+        self.render_offset = end
+        if end < len(self.filtered):
+            self.status.set(f"Weergave opbouwen… {end} van {len(self.filtered)} bestanden")
+            self.root.after(1, lambda: self.render_filter_batch(generation, active))
+        else:
+            self.status.set(f"{len(self.filtered)} van {len(self.items)} bestanden weergegeven in {active or 'de fotomap'}.")
 
     def sort_column(self, column):
         self.sort.set({
