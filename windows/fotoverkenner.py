@@ -126,6 +126,7 @@ class App:
         self.preview_photo = None
         self.map_widget = None
         self.map_marker = None
+        self.highlighting_media_album = False
         self.tree_paths: dict[str, Path] = {}
         self.scan_queue = queue.Queue()
         self.scan_generation = 0
@@ -243,6 +244,12 @@ class App:
 
         if tkintermapview is not None:
             self.map_widget = tkintermapview.TkinterMapView(map_tab, corner_radius=0)
+            # Gebruik CARTO-kaarttegels in plaats van de standaard OSM-tegelserver,
+            # die op sommige netwerken een Access blocked-melding geeft.
+            self.map_widget.set_tile_server(
+                "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+                max_zoom=20
+            )
             self.map_widget.pack(fill="both", expand=True, padx=6, pady=6)
             self.map_widget.set_position(52.519142, 6.423672)
             self.map_widget.set_zoom(7)
@@ -254,7 +261,8 @@ class App:
             ).pack(fill="both", expand=True)
         map_actions = ttk.Frame(map_tab)
         map_actions.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Button(map_actions, text="Open kaart extern", command=self.open_external_map).pack(side="left")
+        ttk.Label(map_actions, text="Kaarttegels: CARTO · © OpenStreetMap").pack(side="right", padx=8)
+        ttk.Button(map_actions, text="Open in Google Maps", command=self.open_external_map).pack(side="left")
         ttk.Button(map_actions, text="Locatie zoeken", command=self.lookup).pack(side="left", padx=6)
 
         ttk.Label(
@@ -414,6 +422,8 @@ class App:
             self.populate_album_node(selection)
 
     def album_selected(self, _event=None):
+        if self.highlighting_media_album:
+            return
         selection = self.album_tree.selection()
         if not selection:
             return
@@ -556,6 +566,7 @@ class App:
         except (ValueError, IndexError):
             return
         self.selected = media
+        self.highlight_media_album(media)
         lines = [
             f"Bestand: {media.path.name}",
             f"Volledig pad: {media.path}",
@@ -578,6 +589,33 @@ class App:
         self.details.configure(state="disabled")
         self.render_preview()
         self.update_map()
+
+    def highlight_media_album(self, media):
+        """Markeer de map van het gekozen bestand zonder de huidige bestandenlijst te filteren."""
+        if not self.folder:
+            return
+        try:
+            relative = media.path.parent.relative_to(self.folder)
+        except ValueError:
+            return
+        node_id = str(self.folder)
+        if node_id not in self.tree_paths:
+            return
+        self.populate_album_node(node_id)
+        self.album_tree.item(node_id, open=True)
+        for part in relative.parts:
+            next_id = str(Path(node_id) / part)
+            if next_id not in self.tree_paths:
+                break
+            self.populate_album_node(next_id)
+            self.album_tree.item(node_id, open=True)
+            node_id = next_id
+        if node_id in self.tree_paths:
+            self.highlighting_media_album = True
+            self.album_tree.selection_set(node_id)
+            self.album_tree.focus(node_id)
+            self.album_tree.see(node_id)
+            self.root.after(200, lambda: setattr(self, "highlighting_media_album", False))
 
     def resize_preview(self, _event=None):
         if self.selected and not self.selected.is_video:
@@ -635,7 +673,7 @@ class App:
     def open_external_map(self):
         media = self.selected
         if media and media.lat is not None and media.lon is not None:
-            url = f"https://www.openstreetmap.org/?mlat={media.lat}&mlon={media.lon}#map=17/{media.lat}/{media.lon}"
+            url = f"https://www.google.com/maps?q={media.lat},{media.lon}"
             webbrowser.open(url)
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
