@@ -265,6 +265,21 @@ class App:
         media_bar = ttk.Frame(media_list)
         media_bar.pack(fill="x", pady=(5, 4))
         ttk.Label(media_bar, text="🖼 Foto's en video's", font=("Segoe UI", 10, "bold")).pack(side="left")
+        # Treeview-cellen ondersteunen geen tekstselectie; toon de geselecteerde
+        # bestandsnaam daarom ook in een echt, readonly invoerveld.
+        filename_bar = ttk.Frame(media_list)
+        filename_bar.pack(fill="x", pady=(0, 4))
+        ttk.Label(filename_bar, text="Bestandsnaam:").pack(side="left", padx=(0, 5))
+        self.filename_var = tk.StringVar(value="")
+        self.filename_entry = tk.Entry(
+            filename_bar, textvariable=self.filename_var, state="readonly",
+            relief="solid", bd=1, font=("Segoe UI", 9)
+        )
+        self.filename_entry.pack(side="left", fill="x", expand=True)
+        self.filename_entry.bind(
+            "<Control-a>",
+            lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1]
+        )
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -417,6 +432,8 @@ class App:
     def clear_detail_panels(self):
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
+        if hasattr(self, "filename_var"):
+            self.filename_var.set("")
         if hasattr(self, "delete_button"):
             self.delete_button.configure(state="disabled")
         self.preview_photo = None
@@ -772,6 +789,7 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
+        self.filename_var.set(media.path.name)
         self.delete_button.configure(state="normal")
         self.highlight_media_album(media)
         lines = [
@@ -1107,21 +1125,16 @@ class App:
         return {name[index:index + 5] for index in range(max(0, len(name) - 4))}
 
     def find_derived_media(self, selected):
-        """Zoek foto's met minimaal één reeks van vijf opeenvolgende gelijke tekens in de filename."""
-        album = self.active_folder or self.folder
-        if not album:
-            return []
+        """Zoek alle gescande media met een gedeelde reeks van vijf filename-tekens."""
         selected_keys = self.filename_match_keys(selected.path)
         if not selected_keys:
             return []
         matches = []
         for candidate in self.items:
-            if candidate.path == selected.path or candidate.is_video:
+            if candidate.path == selected.path:
                 continue
-            if album not in candidate.path.parents:
-                continue
-            candidate_name = candidate.path.stem.casefold()
-            common = sorted(key for key in selected_keys if key in candidate_name)
+            candidate_keys = self.filename_match_keys(candidate.path)
+            common = sorted(selected_keys.intersection(candidate_keys))
             if common:
                 matches.append((
                     candidate,
@@ -1160,7 +1173,7 @@ class App:
     def _load_derived_candidates(self, selected):
         if self.delete_selected_item is not selected:
             return
-        self.delete_count.configure(text="Zoeken op laatste zes tekens…")
+        self.delete_count.configure(text="Zoeken op gedeelde reeksen van vijf tekens in alle mappen…")
         matches = self.find_derived_media(selected)
         if self.delete_selected_item is not selected:
             return
@@ -1172,7 +1185,7 @@ class App:
             self._add_delete_candidate_tile(candidate, reason, variable=variable)
             self.delete_candidate_choices.append((candidate, variable))
         if not matches:
-            ttk.Label(self.delete_inner, text="Geen andere foto's met dezelfde laatste zes tekens gevonden.").grid(
+            ttk.Label(self.delete_inner, text="Geen andere media met een gedeelde reeks van vijf bestandsnaamtekens gevonden.").grid(
                 row=1, column=0, sticky="w", padx=12, pady=12
             )
         self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all"))
