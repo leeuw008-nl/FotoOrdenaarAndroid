@@ -362,7 +362,8 @@ class App:
                     continue
                 self.tree_paths[directory_id] = directory
                 self.album_tree.insert(node_id, "end", iid=directory_id, text=f"📁 {directory.name}")
-                self.add_album_placeholder(directory_id, directory)
+                # Placeholder voorkomt dat onderliggende mappen vooraf worden doorzocht.
+                self.album_tree.insert(directory_id, "end", iid="__lazy__" + directory_id, text="…")
         except (OSError, PermissionError):
             return
 
