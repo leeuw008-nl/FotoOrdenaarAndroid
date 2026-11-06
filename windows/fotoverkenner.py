@@ -10,17 +10,23 @@ from PIL import Image, ImageTk, ExifTags
 IMAGE_EXTS={".jpg",".jpeg",".png",".tif",".tiff",".bmp",".webp",".gif"}
 VIDEO_EXTS={".mp4",".mov",".avi",".mkv",".m4v",".wmv",".3gp",".mts",".m2ts"}
 MEDIA_EXTS=IMAGE_EXTS|VIDEO_EXTS
-GPS_NAMES={v:k for k,v in ExifTags.GPSTAGS.items()}
+GPS_NAMES=ExifTags.GPSTAGS
 
 def num(v):
     try:return float(v)
     except Exception:
         try:return float(v.numerator)/float(v.denominator)
         except Exception:return 0.0
+def gps_ref(v):
+    if isinstance(v,bytes):
+        try:v=v.decode("ascii","ignore")
+        except Exception:pass
+    return str(v).strip().upper()
+
 def dms(v,ref):
     if not v or len(v)<3:return None
     n=num(v[0])+num(v[1])/60+num(v[2])/3600
-    return -n if str(ref).upper() in ("S","W") else n
+    return -n if gps_ref(ref) in ("S","W") else n
 
 @dataclass
 class Media:
@@ -50,8 +56,11 @@ def inspect_file(path):
                     try:m.capture=datetime.strptime(str(raw),"%Y:%m:%d %H:%M:%S")
                     except ValueError:pass
                 m.camera=" ".join(str(x).strip() for x in (ex.get(271),ex.get(272)) if x)
-                gps=ex.get_ifd(34853) if 34853 in ex else {}
-                gps={GPS_NAMES.get(k,k):v for k,v in gps.items()}
+                try:
+                    gps_ifd=ex.get_ifd(34853)
+                except Exception:
+                    gps_ifd={}
+                gps={GPS_NAMES.get(k,k):v for k,v in gps_ifd.items()}
                 m.lat=dms(gps.get("GPSLatitude"),gps.get("GPSLatitudeRef","N"))
                 m.lon=dms(gps.get("GPSLongitude"),gps.get("GPSLongitudeRef","E"))
         except Exception:pass
