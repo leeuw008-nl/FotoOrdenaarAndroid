@@ -128,6 +128,7 @@ class App:
         self.map_marker = None
         self.map_markers = []
         self.map_content_available = False
+        self.album_map_path = None
         self.album_map_enabled = tk.BooleanVar(value=False)
         self.active_tab = "Afbeelding"
         self.tab_buttons = {}
@@ -378,7 +379,6 @@ class App:
         if generation != self.scan_generation:
             return
         finished = False
-        path_indexes = {item.path: index for index, item in enumerate(self.items)}
         while True:
             try:
                 item_generation, kind, payload = self.scan_queue.get_nowait()
@@ -396,6 +396,7 @@ class App:
                 self.update_tab_colors()
                 self.start_metadata_scan(generation)
             elif kind == "metadata_batch":
+                path_indexes = {item.path: index for index, item in enumerate(self.items)}
                 for enriched in payload:
                     index = path_indexes.get(enriched.path)
                     if index is not None:
@@ -405,8 +406,8 @@ class App:
             elif kind == "metadata_done":
                 self.filter()
                 self.status.set(f"Gereed: {len(self.items)} bestanden; metadata verwerkt voor {payload} bestanden.")
-                if self.active_folder and self.folder and self.active_folder != self.folder:
-                    self.show_album_on_map(self.active_folder, switch_tab=False)
+                if self.album_map_path:
+                    self.show_album_on_map(self.album_map_path, switch_tab=False)
                 self.update_tab_colors()
                 finished = True
         if not finished:
@@ -508,6 +509,7 @@ class App:
         path = self.tree_paths.get(selection[0])
         if path and path.is_dir():
             self.clear_detail_panels()
+            self.album_map_path = path
             self.active_folder = path
             self.update_breadcrumb()
             self.filter()
@@ -646,6 +648,7 @@ class App:
         except (ValueError, IndexError):
             return
         self.clear_detail_panels()
+        self.album_map_path = None
         self.selected = media
         self.highlight_media_album(media)
         lines = [
