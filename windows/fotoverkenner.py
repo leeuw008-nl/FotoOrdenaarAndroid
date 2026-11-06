@@ -644,6 +644,7 @@ class App:
             media = self.filtered[int(selection[0])]
         except (ValueError, IndexError):
             return
+        self.clear_detail_panels()
         self.selected = media
         self.highlight_media_album(media)
         lines = [
