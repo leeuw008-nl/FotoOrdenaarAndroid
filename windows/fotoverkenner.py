@@ -200,12 +200,15 @@ class App:
         self.build_ui()
 
     def copy_text_selection(self, event=None):
-        """Kopieer geselecteerde bestandsnaamtekst naar het Windows-klembord."""
+        """Kopieer de met de muis of toetsen geselecteerde bestandsnaam."""
         widget = event.widget if event is not None else self.filename_entry
         try:
             value = widget.get("sel.first", "sel.last")
-        except tk.TclError:
-            value = widget.get("1.0", "end-1c")
+        except (tk.TclError, TypeError):
+            try:
+                value = widget.get("1.0", "end-1c")
+            except tk.TclError:
+                value = ""
         if value:
             self.root.clipboard_clear()
             self.root.clipboard_append(value)
@@ -296,19 +299,17 @@ class App:
         filename_bar = ttk.Frame(media_list)
         filename_bar.pack(fill="x", pady=(0, 4))
         ttk.Label(filename_bar, text="Bestandsnaam:").pack(side="left", padx=(0, 5))
-        self.filename_entry = tk.Text(
-            filename_bar, height=1, wrap="none", undo=False,
-            exportselection=False, relief="solid", bd=1,
-            font=("Segoe UI", 9), padx=4, pady=2
+        self.filename_entry = tk.Entry(
+            filename_bar, relief="solid", bd=1, readonlybackground="#ffffff",
+            font=("Segoe UI", 9), exportselection=False
         )
         self.filename_entry.pack(side="left", fill="x", expand=True)
-        self.filename_entry.bind("<KeyPress>", self._protect_filename_entry)
+        self.filename_entry.configure(state="readonly", cursor="xterm")
         self.filename_entry.bind(
             "<Control-a>",
-            lambda event: (self.filename_entry.tag_add("sel", "1.0", "end-1c"), "break")[1]
+            lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1]
         )
         self.filename_entry.bind("<Control-c>", self.copy_text_selection)
-        self.filename_entry.configure(cursor="xterm")
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -399,7 +400,7 @@ class App:
         self.delete_inner = ttk.Frame(self.delete_canvas)
         self.delete_window = self.delete_canvas.create_window((0, 0), window=self.delete_inner, anchor="nw")
         self.delete_inner.bind("<Configure>", lambda _e: self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all")))
-        self.delete_canvas.bind("<Configure>", lambda e: self.delete_canvas.itemconfigure(self.delete_window, width=e.width))
+        self.delete_canvas.bind("<Configure>", self.delete_candidates_resize)
         # Muiswiel scrollt ook wanneer de cursor boven een kandidaat-tegel staat.
         self.root.bind_all("<MouseWheel>", self._scroll_delete_candidates, add="+")
         self.root.bind_all("<Button-4>", self._scroll_delete_candidates, add="+")
@@ -464,7 +465,9 @@ class App:
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
         if hasattr(self, "filename_entry"):
-            self.filename_entry.delete("1.0", "end")
+            self.filename_entry.configure(state="normal")
+            self.filename_entry.delete(0, "end")
+            self.filename_entry.configure(state="readonly")
         if hasattr(self, "delete_button"):
             self.delete_button.configure(state="disabled")
         self.preview_photo = None
@@ -856,8 +859,10 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
-        self.filename_entry.delete("1.0", "end")
-        self.filename_entry.insert("1.0", media.path.name)
+        self.filename_entry.configure(state="normal")
+        self.filename_entry.delete(0, "end")
+        self.filename_entry.insert(0, media.path.name)
+        self.filename_entry.configure(state="readonly")
         self.delete_button.configure(state="normal")
         self.highlight_media_album(media)
         lines = [
@@ -1247,7 +1252,7 @@ class App:
     def _load_derived_candidates(self, selected):
         if self.delete_selected_item is not selected:
             return
-        self.delete_count.configure(text="Zoeken op gedeelde reeksen van vijf tekens in alle mappen…")
+        self.delete_count.configure(text="Zoeken naar gelijke datum-tijdcodes in alle mappen…")
         matches = self.find_derived_media(selected)
         if self.delete_selected_item is not selected:
             return
@@ -1260,7 +1265,7 @@ class App:
         )
         self.delete_heading.configure(text="Verwijderkandidaten voor " + selected.path.name)
         self.delete_count.configure(
-            text=f"{len(matches) + 1} bestanden gevonden; {len(self.items)} bestanden doorzocht"
+            text=f"{len(matches) + 1} media gevonden; {len(self.items)} bestanden doorzocht"
         )
         self.delete_confirm_button.configure(state="normal")
         for candidate, reason, _strong_name in matches:
@@ -1268,8 +1273,8 @@ class App:
             self._add_delete_candidate_tile(candidate, reason, variable=variable)
             self.delete_candidate_choices.append((candidate, variable))
         if not matches:
-            ttk.Label(self.delete_inner, text="Geen andere media met een gedeelde reeks van vijf bestandsnaamtekens gevonden.").grid(
-                row=1, column=0, sticky="w", padx=12, pady=12
+            ttk.Label(self.delete_inner, text="Geen andere media met dezelfde datum-tijdcode gevonden.").grid(
+                row=0, column=0, sticky="w", padx=12, pady=12
             )
         self.delete_canvas.update_idletasks()
         self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all"))
@@ -1277,11 +1282,30 @@ class App:
         self.show_tab("Verwijderen")
         self.root.update_idletasks()
 
+    def delete_candidates_resize(self, event=None):
+        if event is not None:
+            self.delete_canvas.itemconfigure(self.delete_window, width=event.width)
+        self.root.after_idle(self.layout_delete_candidates)
+
+    def layout_delete_candidates(self):
+        if not hasattr(self, "delete_inner"):
+            return
+        width = max(1, self.delete_canvas.winfo_width())
+        columns = max(2, min(6, width // 190))
+        for index, child in enumerate(self.delete_inner.winfo_children()):
+            row, column = divmod(index, columns)
+            child.grid_configure(row=row, column=column, sticky="nsew", padx=4, pady=4)
+        for column in range(6):
+            self.delete_inner.grid_columnconfigure(
+                column, weight=1 if column < columns else 0,
+                uniform="delete_candidates" if column < columns else ""
+            )
+
     def _add_delete_candidate_tile(self, media, reason, variable=None, mandatory=False):
         index = len(self.delete_inner.winfo_children())
-        tile = ttk.Frame(self.delete_inner, relief="ridge", padding=7)
-        tile.grid(row=index // 3, column=index % 3, sticky="nsew", padx=5, pady=5)
-        self.delete_inner.columnconfigure(index % 3, weight=1)
+        tile = ttk.Frame(self.delete_inner, relief="ridge", padding=5)
+        tile.grid(row=index // 4, column=index % 4, sticky="nsew", padx=4, pady=4)
+        tile.columnconfigure(0, weight=1)
         thumb = tk.Label(tile, text="VIDEO" if media.is_video else "Voorbeeld niet beschikbaar",
                          width=22, height=7, bg="#e5e7eb", fg="#374151", anchor="center")
         thumb.pack(fill="x")
@@ -1302,19 +1326,18 @@ class App:
         except Exception:
             pass
         # Een Tk Text-veld ondersteunt echte muisselectie van de volledige naam.
-        filename_field = tk.Text(
-            tile, height=1, wrap="none", relief="flat",
-            exportselection=False, font=("Segoe UI", 9), padx=2, pady=1
+        filename_field = tk.Entry(
+            tile, relief="flat", readonlybackground="#ffffff",
+            exportselection=False, font=("Segoe UI", 9), justify="center"
         )
+        filename_field.insert(0, media.path.name)
+        filename_field.configure(state="readonly", cursor="xterm")
         filename_field.pack(fill="x", pady=(5, 2))
-        filename_field.insert("1.0", media.path.name)
-        filename_field.bind("<KeyPress>", self._protect_filename_entry)
         filename_field.bind(
             "<Control-a>",
-            lambda event, field=filename_field: (field.tag_add("sel", "1.0", "end-1c"), "break")[1]
+            lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1]
         )
         filename_field.bind("<Control-c>", self.copy_text_selection)
-        filename_field.configure(cursor="xterm")
         ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
         ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
@@ -1322,6 +1345,7 @@ class App:
                       font=("Segoe UI", 9, "bold")).pack(anchor="w")
         else:
             ttk.Checkbutton(tile, text="Ook verwijderen", variable=variable).pack(anchor="w")
+        self.layout_delete_candidates()
 
     def confirm_delete_candidates(self):
         selected = getattr(self, "delete_selected_item", None)
