@@ -701,14 +701,28 @@ class App:
                 self.status.set(f"Metadata lezen… {payload} bestanden verwerkt")
             elif kind == "metadata_done":
                 selected_path = self.selected.path if self.selected else None
-                self.filter()
-                # Metadata wordt in een achtergrondworker ingelezen. De eerste
-                # inventaris bevatte alleen bestandsdatums; ververs daarom ook
-                # de huidige selectie zodra EXIF/GPS volledig beschikbaar is.
+                # Alleen opnieuw filteren als de sortering afhankelijk is van
+                # metadata. Bij de standaard bestandsdatum blijven Gallery en
+                # selectie intact; alleen de zichtbare tabelwaarden verversen.
+                if self.sort.get() in ("Opnamedatum", "Gemeente-plaats"):
+                    self.filter()
+                else:
+                    for row in self.table.get_children():
+                        try:
+                            media = self.filtered[int(row)]
+                        except (ValueError, IndexError):
+                            continue
+                        date_text = media.date.strftime("%d-%m-%Y %H:%M:%S")
+                        size = f"{media.size / (1024 * 1024):.1f} MB" if media.size >= 1048576 else f"{media.size / 1024:.0f} KB"
+                        gps = f"{media.lat:.5f}, {media.lon:.5f}" if media.lat is not None and media.lon is not None else media.place
+                        icon = "📄" if media.is_video else "🖼"
+                        self.table.item(row, values=(f"{icon} {media.path.name}", "Video" if media.is_video else "Medium", date_text, size, gps))
+                # Ververs de detailtekst van een al geselecteerd medium, maar
+                # start niet opnieuw een albumkaart op de achtergrond.
                 if selected_path:
                     self.root.after(150, lambda path=selected_path: self.restore_selection_after_metadata(path))
                 self.status.set(f"Gereed: {len(self.items)} bestanden; metadata verwerkt voor {payload} bestanden.")
-                if self.album_map_path:
+                if self.active_tab == "Kaart" and self.album_context_active and self.album_map_path:
                     self.show_album_on_map(self.album_map_path, switch_tab=False)
                 self.update_tab_colors()
                 finished = True
@@ -1482,7 +1496,7 @@ class App:
             return
         self.active_tab = name
         self.tab_frames[name].tkraise()
-        if name == "Kaart" and self.album_context_active and self.album_map_path:
+        if name == "Kaart" and self.album_context_active and self.album_map_path and self.album_map_enabled.get():
             self.show_album_on_map(self.album_map_path, switch_tab=False)
         self.update_tab_colors()
 
