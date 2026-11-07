@@ -1941,6 +1941,7 @@ class App:
                     f"--rc-host=127.0.0.1:{port}",
                     "--no-video-title-show",
                     "--no-one-instance",
+                    "--play-and-exit",
                     f"--drawable-hwnd={hwnd}",
                     str(media.path),
                 ]
