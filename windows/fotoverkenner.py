@@ -461,6 +461,10 @@ class App:
         self.preview.bind("<Configure>", self.resize_preview)
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
+        self.previous_media_button = ttk.Button(image_actions, text="◀ Vorige", command=lambda: self.navigate_media(-1), state="disabled")
+        self.previous_media_button.pack(side="left", padx=(0, 6))
+        self.next_media_button = ttk.Button(image_actions, text="Volgende ▶", command=lambda: self.navigate_media(1), state="disabled")
+        self.next_media_button.pack(side="left", padx=(0, 8))
         ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file).pack(side="left")
         self.delete_button = ttk.Button(image_actions, text="🗑 Verwijderen", command=self.delete_selected_media, state="disabled")
         self.delete_button.pack(side="left", padx=(8, 0))
@@ -502,9 +506,9 @@ class App:
         self.delete_inner.bind("<Configure>", lambda _e: self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all")))
         self.delete_canvas.bind("<Configure>", self.delete_candidates_resize)
         # Muiswiel scrollt ook wanneer de cursor boven een kandidaat-tegel staat.
-        self.root.bind_all("<MouseWheel>", self._scroll_delete_candidates, add="+")
-        self.root.bind_all("<Button-4>", self._scroll_delete_candidates, add="+")
-        self.root.bind_all("<Button-5>", self._scroll_delete_candidates, add="+")
+        self.root.bind_all("<MouseWheel>", self._scroll_gallery_or_delete, add="+")
+        self.root.bind_all("<Button-4>", self._scroll_gallery_or_delete, add="+")
+        self.root.bind_all("<Button-5>", self._scroll_gallery_or_delete, add="+")
         delete_actions = ttk.Frame(delete_tab, padding=(8, 4, 8, 8))
         delete_actions.pack(fill="x")
         ttk.Button(delete_actions, text="Annuleren", command=lambda: self.show_tab("Gallery")).pack(side="right", padx=(6, 0))
@@ -570,6 +574,9 @@ class App:
             self.filename_entry.configure(state="readonly")
         if hasattr(self, "delete_button"):
             self.delete_button.configure(state="disabled")
+        if hasattr(self, "previous_media_button"):
+            self.previous_media_button.configure(state="disabled")
+            self.next_media_button.configure(state="disabled")
         self.preview_photo = None
         if hasattr(self, "preview"):
             self.preview.configure(image="", text="Selecteer een medium")
@@ -964,6 +971,7 @@ class App:
         self.filename_entry.insert(0, media.path.name)
         self.filename_entry.configure(state="readonly")
         self.delete_button.configure(state="normal")
+        self.update_media_navigation_buttons()
         self.highlight_media_album(media)
         lines = [
             f"Bestand: {media.path.name}",
@@ -1252,31 +1260,76 @@ class App:
             self.show_tab("Kaart")
         self.update_tab_colors()
 
-    def _scroll_delete_candidates(self, event):
-        """Scroll kandidaten met het muiswiel, ook boven tegels en selectievakjes."""
-        if self.active_tab != "Verwijderen":
-            return
+    def _scroll_gallery_or_delete(self, event):
+        """Muiswiel scrollt het zichtbare Gallery- of Verwijderen-paneel."""
         try:
             widget = self.root.winfo_containing(event.x_root, event.y_root)
+            target_canvas = None
+            target_inner = None
+            if self.active_tab == "Gallery":
+                target_canvas, target_inner = self.gallery_canvas, self.gallery_inner
+            elif self.active_tab == "Verwijderen":
+                target_canvas, target_inner = self.delete_canvas, self.delete_inner
+            else:
+                return
             inside = False
             while widget is not None:
-                if widget is self.delete_inner or widget is self.delete_canvas:
+                if widget is target_inner or widget is target_canvas:
                     inside = True
                     break
                 widget = widget.master
             if not inside:
                 return
-            if getattr(event, "num", None) == 4:
-                self.delete_canvas.yview_scroll(-1, "units")
-            elif getattr(event, "num", None) == 5:
-                self.delete_canvas.yview_scroll(1, "units")
+            number = getattr(event, "num", None)
+            if number == 4:
+                direction = -1
+            elif number == 5:
+                direction = 1
             else:
                 delta = int(getattr(event, "delta", 0))
-                if delta:
-                    self.delete_canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+                if not delta:
+                    return
+                # Windows levert meestal stappen van 120; macOS/Linux kunnen
+                # kleinere delta's leveren. Eén muiswielstap blijft één regel.
+                direction = -1 if delta > 0 else 1
+            target_canvas.yview_scroll(direction * 3, "units")
             return "break"
-        except Exception:
+        except (tk.TclError, AttributeError):
             return
+
+    def update_media_navigation_buttons(self):
+        if not hasattr(self, "previous_media_button"):
+            return
+        try:
+            index = self.filtered.index(self.selected) if self.selected else -1
+        except ValueError:
+            index = -1
+        self.previous_media_button.configure(state="normal" if index > 0 else "disabled")
+        self.next_media_button.configure(state="normal" if 0 <= index < len(self.filtered) - 1 else "disabled")
+
+    def navigate_media(self, step):
+        """Selecteer het vorige of volgende item in de actuele, gesorteerde medialijst."""
+        if not self.selected or not self.filtered:
+            return
+        try:
+            current = self.filtered.index(self.selected)
+        except ValueError:
+            return
+        target = current + step
+        if not 0 <= target < len(self.filtered):
+            return
+        media = self.filtered[target]
+        row = str(target)
+        if not self.table.exists(row):
+            date_text = media.date.strftime("%d-%m-%Y %H:%M:%S")
+            size = f"{media.size / (1024 * 1024):.1f} MB" if media.size >= 1048576 else f"{media.size / 1024:.0f} KB"
+            gps = f"{media.lat:.5f}, {media.lon:.5f}" if media.lat is not None and media.lon is not None else media.place
+            icon = "📄" if media.is_video else "🖼"
+            self.table.insert("", "end", iid=row, values=(f"{icon} {media.path.name}", "Video" if media.is_video else "Medium", date_text, size, gps))
+        self.table.selection_set(row)
+        self.table.focus(row)
+        self.table.see(row)
+        self.select()
 
     def show_tab(self, name):
         if name not in self.tab_frames:
