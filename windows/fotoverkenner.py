@@ -392,6 +392,9 @@ class App:
         self.album_tree.pack(side="left", fill="both", expand=True)
         album_scroll.pack(side="right", fill="y")
         self.album_tree.bind("<<TreeviewSelect>>", self.album_selected)
+        # Een klik op een al geselecteerde map veroorzaakt geen TreeviewSelect-event.
+        # Verwerk daarom iedere expliciete muisklik ook na de standaard Treeview-binding.
+        self.album_tree.bind("<ButtonRelease-1>", self.album_clicked, add="+")
         self.album_tree.bind("<<TreeviewOpen>>", self.album_opened)
 
         media_bar = ttk.Frame(media_list)
@@ -802,8 +805,27 @@ class App:
         if selection:
             self.populate_album_node(selection)
 
-    def album_selected(self, _event=None):
-        if self.highlighting_media_album:
+    def album_clicked(self, event=None):
+        """Open een album ook als het al geselecteerd/gehighlight is."""
+        if event is None:
+            return
+        row = self.album_tree.identify_row(event.y)
+        if not row or row.startswith("__lazy__"):
+            return
+        # Laat eerst de standaard Treeview-afhandeling de rij selecteren.
+        self.root.after_idle(lambda selected_row=row: self.open_album_row(selected_row))
+
+    def open_album_row(self, row):
+        if not self.album_tree.exists(row):
+            return
+        self.album_tree.selection_set(row)
+        self.album_tree.focus(row)
+        self.album_selected(force=True)
+
+    def album_selected(self, _event=None, force=False):
+        # Automatische markering vanuit een mediaselectie mag geen album openen.
+        # Een expliciete muisklik heeft altijd voorrang, ook bij dezelfde rij.
+        if self.highlighting_media_album and not force:
             return
         selection = self.album_tree.selection()
         if not selection:
