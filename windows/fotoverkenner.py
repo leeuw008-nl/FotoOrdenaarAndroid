@@ -493,7 +493,7 @@ class App:
         self.video_surface = tk.Frame(image_tab, background="black")
         video_actions = ttk.Frame(image_tab)
         video_actions.pack(fill="x", padx=6, pady=(0, 4))
-        self.video_play_button = ttk.Button(video_actions, text="▶ Afspelen", command=self.toggle_video_playback)
+        self.video_play_button = ttk.Button(video_actions, text="Openen / afspelen", command=self.toggle_video_playback)
         self.video_play_button.pack(side="left")
         self.video_stop_button = ttk.Button(video_actions, text="■ Stoppen", command=self.stop_video_playback, state="disabled")
         self.video_stop_button.pack(side="left", padx=(6, 0))
@@ -512,7 +512,8 @@ class App:
         self.previous_media_button.pack(side="left", padx=(0, 6))
         self.next_media_button = ttk.Button(image_actions, text="Volgende ▶", command=lambda: self.navigate_media(1), state="disabled")
         self.next_media_button.pack(side="left", padx=(0, 8))
-        ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file).pack(side="left")
+        self.open_button = ttk.Button(image_actions, text="Openen / afspelen", command=self.open_file)
+        self.open_button.pack(side="left")
         self.delete_button = ttk.Button(image_actions, text="🗑 Verwijderen", command=self.delete_selected_media, state="disabled")
         self.delete_button.pack(side="left", padx=(8, 0))
 
@@ -1079,12 +1080,15 @@ class App:
         self.album_map_path = None
         self.selected = media
         if media.is_video:
+            self.open_button.pack_forget()
             self.video_actions.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1])
-            self.video_play_button.configure(text="▶ Afspelen", state="normal")
+            self.video_play_button.configure(text="Openen / afspelen", state="normal")
             self.video_stop_button.configure(state="disabled")
+            self.video_fullscreen_button.configure(state="disabled")
             self.video_status.configure(text="Video klaar om af te spelen")
         else:
             self.video_actions.pack_forget()
+            self.open_button.pack(side="left")
         self.filename_entry.configure(state="normal")
         self.filename_entry.delete(0, "end")
         self.filename_entry.insert(0, media.path.name)
@@ -1881,7 +1885,7 @@ class App:
         if self.vlc_socket is None:
             return False
         try:
-            self.vlc_socket.sendall((command + "\\n").encode("utf-8"))
+            self.vlc_socket.sendall((command + "\n").encode("utf-8"))
             return True
         except OSError:
             try:
@@ -1944,7 +1948,7 @@ class App:
                     startupinfo=startupinfo,
                 )
                 self.video_playing = True
-                self.video_play_button.configure(text="Ⅱ Pauzeren")
+                self.video_play_button.configure(text="Pauzeren")
                 self.video_stop_button.configure(state="normal")
                 self.video_fullscreen_button.configure(state="normal")
                 self.video_status.configure(text="Afspelen via VLC in MediaVerkenner…")
@@ -1955,13 +1959,13 @@ class App:
                 if not self._vlc_send("pause"):
                     raise RuntimeError("De verbinding met de VLC-speler is weggevallen.")
                 self.video_playing = False
-                self.video_play_button.configure(text="▶ Verder")
+                self.video_play_button.configure(text="Verder")
                 self.video_status.configure(text="Gepauzeerd")
             else:
                 if not self._vlc_send("pause"):
                     raise RuntimeError("De verbinding met de VLC-speler is weggevallen.")
                 self.video_playing = True
-                self.video_play_button.configure(text="Ⅱ Pauzeren")
+                self.video_play_button.configure(text="Pauzeren")
                 self.video_status.configure(text="Afspelen via VLC…")
                 self._schedule_vlc_poll()
         except Exception as error:
@@ -2008,24 +2012,37 @@ class App:
         self.vlc_process = None
         if self.vlc_socket is not None:
             try:
-                self.vlc_socket.sendall(b"quit\\n")
+                self.vlc_socket.sendall(b"quit\n")
                 self.vlc_socket.close()
             except OSError:
                 pass
             self.vlc_socket = None
         self.vlc_port = None
         if process is not None:
-            try:
-                process.wait(timeout=1.5)
-            except subprocess.TimeoutExpired:
-                process.terminate()
+            # Laat de UI direct reageren; het opruimen van VLC gebeurt op de
+            # achtergrond zodat Stoppen niet op process.wait() hoeft te wachten.
+            def finish_vlc_process(proc):
                 try:
-                    process.wait(timeout=1.0)
+                    proc.wait(timeout=0.4)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    try:
+                        proc.terminate()
+                    except OSError:
+                        pass
+                    try:
+                        proc.wait(timeout=0.4)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+            threading.Thread(
+                target=finish_vlc_process, args=(process,),
+                name="MediaVerkenner-VLC-stop", daemon=True
+            ).start()
         self.video_playing = False
         if hasattr(self, "video_play_button"):
-            self.video_play_button.configure(text="▶ Afspelen")
+            self.video_play_button.configure(text="Openen / afspelen")
             self.video_stop_button.configure(state="disabled")
             self.video_fullscreen_button.configure(state="disabled")
         if hasattr(self, "video_surface"):
