@@ -1999,7 +1999,7 @@ class App:
         try:
             old_timeout = sock.gettimeout()
             sock.settimeout(0.025)
-            sock.sendall(b"get_time\\nget_length\\n")
+            sock.sendall(b"get_time\nget_length\n")
             chunks = []
             deadline = time.monotonic() + 0.09
             while time.monotonic() < deadline:
@@ -2011,7 +2011,7 @@ class App:
                 except socket.timeout:
                     break
             sock.settimeout(old_timeout)
-            values = re.findall(r"(?m)^\\s*(\\d+)\\s*$", "".join(chunks))
+            values = re.findall(r"(?m)^\s*(\d+)\s*$", "".join(chunks))
             if len(values) >= 2:
                 current, duration = int(values[-2]), int(values[-1])
                 if duration > 0:
