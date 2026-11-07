@@ -426,7 +426,7 @@ class App:
         self.table.bind("<Control-c>", self.copy_selected_filename)
         self.table.bind("<Button-3>", self.show_filename_context_menu)
 
-        tab_bar = tk.Frame(right, bg="#e5e7eb")
+        tab_bar = tk.Frame(right, bg="#D6E3F0")
         tab_bar.pack(fill="x")
         tab_body = ttk.Frame(right)
         tab_body.pack(fill="both", expand=True)
@@ -470,7 +470,7 @@ class App:
         self.gallery_count.pack(side="right")
         gallery_container = ttk.Frame(gallery_tab)
         gallery_container.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self.gallery_canvas = tk.Canvas(gallery_container, highlightthickness=0)
+        self.gallery_canvas = tk.Canvas(gallery_container, highlightthickness=0, bg="#F4F7FB")
         gallery_scroll = ttk.Scrollbar(gallery_container, orient="vertical", command=self.gallery_canvas.yview)
         self.gallery_canvas.configure(yscrollcommand=gallery_scroll.set)
         self.gallery_canvas.pack(side="left", fill="both", expand=True)
@@ -489,7 +489,7 @@ class App:
         ttk.Label(delete_tab, text="Het geselecteerde bestand staat vast bovenaan. Vink de overige gevonden bestanden aan die ook verwijderd mogen worden.", wraplength=900).pack(anchor="w", padx=10, pady=(0, 6))
         delete_container = ttk.Frame(delete_tab)
         delete_container.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self.delete_canvas = tk.Canvas(delete_container, highlightthickness=0)
+        self.delete_canvas = tk.Canvas(delete_container, highlightthickness=0, bg="#F4F7FB")
         delete_scroll = ttk.Scrollbar(delete_container, orient="vertical", command=self.delete_canvas.yview)
         self.delete_canvas.configure(yscrollcommand=delete_scroll.set)
         self.delete_canvas.pack(side="left", fill="both", expand=True)
@@ -1126,6 +1126,8 @@ class App:
             if generation != generation_now or thumbnail is None:
                 continue
             self.gallery_thumb_cache[path] = thumbnail
+            while len(self.gallery_thumb_cache) > 400:
+                self.gallery_thumb_cache.pop(next(iter(self.gallery_thumb_cache)))
             label = self.gallery_thumb_labels.get(path)
             if label is not None and label.winfo_exists():
                 try:
@@ -1527,14 +1529,15 @@ class App:
         }
         for name, button in self.tab_buttons.items():
             if available[name] and name == self.active_tab:
-                bg, fg = "#16803c", "#ffffff"
+                bg, fg = "#0F457A", "#FFFFFF"
             elif available[name]:
-                bg, fg = "#b7e4c7", "#14532d"
+                bg, fg = "#E1EDFA", "#0F457A"
             else:
-                bg, fg = "#e5e7eb", "#4b5563"
+                bg, fg = "#E8EDF3", "#66788A"
             button.configure(
-                bg=bg, fg=fg, activebackground="#86c99d",
-                activeforeground="#123b22", highlightthickness=0
+                bg=bg, fg=fg, activebackground="#C6DDF4",
+                activeforeground="#0F457A", highlightthickness=0,
+                font=("Segoe UI", 10, "bold"), padx=14, pady=8
             )
 
     def map(self):
