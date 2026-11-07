@@ -197,6 +197,7 @@ class App:
         self.album_map_path = None
         self.album_map_enabled = tk.BooleanVar(value=True)
         self.active_tab = "Kaart"
+        self.album_selected = False
         self.tab_buttons = {}
         self.tab_frames = {}
         self.highlighting_media_album = False
@@ -807,6 +808,7 @@ class App:
         path = self.tree_paths.get(selection[0])
         if path and path.is_dir():
             self.clear_detail_panels()
+            self.album_selected = True
             self.set_media_tabs_visible(False)
             self.album_map_path = path
             self.active_folder = path
@@ -989,6 +991,7 @@ class App:
         except (ValueError, IndexError):
             return
         self.clear_detail_panels()
+        self.album_selected = False
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
@@ -1384,21 +1387,43 @@ class App:
         self.update_tab_colors()
 
     def set_media_tabs_visible(self, visible):
-        """Toon Medium en Metadata alleen wanneer een afzonderlijk medium is geselecteerd."""
-        medium = self.tab_buttons.get("Medium")
-        metadata = self.tab_buttons.get("Metadata")
-        if not medium or not metadata:
+        """Toon alleen tabbladen die bij de huidige selectiecontext horen."""
+        self.album_selected = not visible
+        self.update_tab_visibility()
+        if not visible and self.active_tab in ("Medium", "Metadata"):
+            self.show_tab("Gallery")
+
+    def update_tab_visibility(self):
+        if not self.tab_buttons:
             return
-        if visible:
-            if not medium.winfo_manager():
-                medium.pack(side="left", padx=(0, 3), pady=(0, 2), before=self.tab_buttons["Kaart"])
-            if not metadata.winfo_manager():
-                metadata.pack(side="left", padx=(0, 3), pady=(0, 2))
-        else:
-            medium.pack_forget()
-            metadata.pack_forget()
-            if self.active_tab in ("Medium", "Metadata"):
-                self.show_tab("Kaart")
+        media = self.selected
+        has_gps = bool(getattr(self, "map_content_available", False))
+        has_metadata = bool(media and any((
+            media.capture is not None, media.lat is not None, media.lon is not None,
+            bool(media.camera), media.width is not None, media.height is not None,
+            media.is_video
+        )))
+        has_delete_candidates = bool(getattr(self, "delete_selected_item", None))
+        visible = {
+            "Medium": media is not None,
+            "Kaart": has_gps or self.album_selected,
+            "Metadata": bool(media and has_metadata),
+            "Gallery": self.album_selected,
+            "Verwijderen": has_delete_candidates
+        }
+        for name, button in self.tab_buttons.items():
+            if visible.get(name, False):
+                if not button.winfo_manager():
+                    if name == "Verwijderen":
+                        button.pack(side="right", padx=(3, 0), pady=(0, 2))
+                    else:
+                        button.pack(side="left", padx=(0, 3), pady=(0, 2))
+            else:
+                button.pack_forget()
+        if self.active_tab not in [name for name, shown in visible.items() if shown]:
+            fallback = "Gallery" if self.album_selected else ("Medium" if media else "Kaart")
+            if fallback in self.tab_frames and visible.get(fallback):
+                self.show_tab(fallback)
 
     @staticmethod
     def filename_datetime_keys(path):
@@ -1628,6 +1653,7 @@ class App:
             "Gallery": bool(self.filtered),
             "Verwijderen": bool(getattr(self, "delete_selected_item", None))
         }
+        self.update_tab_visibility()
         for name, button in self.tab_buttons.items():
             if available[name] and name == self.active_tab:
                 bg, fg = "#0F457A", "#FFFFFF"
