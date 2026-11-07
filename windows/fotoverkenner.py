@@ -1909,6 +1909,8 @@ class App:
                     str(vlc_exe),
                     "--intf=dummy",
                     "--extraintf=rc",
+                    "--rc-quiet",
+                    "--quiet",
                     f"--rc-host=127.0.0.1:{port}",
                     "--no-video-title-show",
                     "--no-one-instance",
@@ -1916,12 +1918,18 @@ class App:
                     str(media.path),
                 ]
                 self.vlc_port = port
+                # Verberg ook een eventuele Windows-console die VLC zelf opent
+                # voor de RC-interface. De video blijft in video_surface ingebed.
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
                 self.vlc_process = subprocess.Popen(
                     command,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    startupinfo=startupinfo,
                 )
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
