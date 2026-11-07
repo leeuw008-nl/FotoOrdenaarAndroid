@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+<path fill="#087DC5" d="M0,0 H108 V108 H0 Z"/>
+<path fill="#18B5EB" d="M0,42 Q54,10 108,43 V82 H0 Z"/>
+<path fill="#31A64D" d="M0,72 Q40,56 108,72 V108 H0 Z"/>
+<path fill="#08743E" d="M0,92 Q55,77 108,93 V108 H0 Z"/>
+<path fill="#E8F5FD" d="M28,20 L73,15 L78,62 L33,66 Z"/>
+<path fill="#FFFFFF" d="M37,17 L84,20 L82,68 L35,64 Z"/>
+<path fill="#24B4F1" d="M41,23 H78 V57 H41 Z"/>
+<path fill="#FFEB52" d="M69,29 a6,6 0,1 0,0.01,0 Z"/>
+<path fill="#26945B" d="M41,49 L54,35 L64,45 L70,40 L78,49 V57 H41 Z"/>
+<path fill="#087D49" d="M41,55 L57,41 L67,53 L78,45 V57 H41 Z"/>
+<path fill="#FFD033" d="M12,48 H39 L45,55 H89 Q94,55 94,61 V85 Q94,91 87,91 H18 Q12,91 12,85 Z"/>
+<path fill="#F4A923" d="M12,80 Q52,87 94,79 V85 Q94,91 87,91 H18 Q12,91 12,85 Z"/>
+<path fill="#FFFFFF" stroke="#263A4A" stroke-width="4" d="M77,63 a18,18 0,1 0,0.01,0 Z"/>
+<path fill="#3AB5EB" d="M77,67 a13,13 0,1 0,0.01,0 Z"/>
+<path fill="#FFEB52" d="M82,72 a4,4 0,1 0,0.01,0 Z"/>
+<path fill="none" stroke="#263A4A" stroke-width="8" stroke-linecap="round" d="M89,89 L101,102"/>
+</svg>
