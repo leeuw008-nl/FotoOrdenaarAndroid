@@ -5,6 +5,7 @@ import os
 import re
 import queue
 import threading
+import socket
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 import subprocess
@@ -200,6 +201,9 @@ class App:
         self.vlc_instance = None
         self.vlc_player = None
         self.vlc_module = None
+        self.vlc_process = None
+        self.vlc_socket = None
+        self.vlc_port = None
         self.video_poll_job = None
         self.map_widget = None
         self.map_marker = None
@@ -485,6 +489,8 @@ class App:
         self.preview = ttk.Label(image_tab, text="Selecteer een medium", anchor="center", takefocus=True)
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         self.preview.bind("<Configure>", self.resize_preview)
+        # Eigen HWND voor VLC; de Tk-app laadt zelf geen native VLC-DLL's.
+        self.video_surface = tk.Frame(image_tab, background="black")
         video_actions = ttk.Frame(image_tab)
         video_actions.pack(fill="x", padx=6, pady=(0, 4))
         self.video_play_button = ttk.Button(video_actions, text="▶ Afspelen", command=self.toggle_video_playback)
@@ -1824,103 +1830,115 @@ class App:
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
 
-    def _load_vlc_module(self):
-        """Laad de VLC-installatie die al op deze Windows-pc aanwezig is."""
-        if self.vlc_module is not None:
-            return self.vlc_module
+    def _find_vlc_executable(self):
+        """Vind de bestaande VLC-installatie zonder libVLC in dit proces te laden."""
         if sys.platform != "win32":
             raise RuntimeError("VLC-integratie is alleen beschikbaar op Windows.")
-
         candidates = []
         try:
             import winreg
             for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
                 for key_name in (
-                    r"SOFTWARE\VideoLAN\VLC",
-                    r"SOFTWARE\WOW6432Node\VideoLAN\VLC",
+                    r"SOFTWARE\\VideoLAN\\VLC",
+                    r"SOFTWARE\\WOW6432Node\\VideoLAN\\VLC",
                 ):
                     try:
                         with winreg.OpenKey(hive, key_name) as key:
                             install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
-                            candidates.append(Path(install_dir))
+                            candidates.append(Path(install_dir) / "vlc.exe")
                     except OSError:
                         pass
         except Exception:
             pass
-
         for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
             base = os.environ.get(env_name)
             if base:
-                candidates.append(Path(base) / "VideoLAN" / "VLC")
-
-        vlc_dir = next(
-            (folder for folder in candidates if (folder / "libvlc.dll").is_file()),
-            None
+                candidates.append(Path(base) / "VideoLAN" / "VLC" / "vlc.exe")
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError(
+            "MediaVerkenner kan vlc.exe niet vinden. Controleer of VLC Media Player "
+            "(64-bits) is geïnstalleerd."
         )
-        if vlc_dir is None:
-            raise FileNotFoundError(
-                "MediaVerkenner kan VLC niet vinden. Controleer of VLC Media Player "
-                "(64-bits) is geïnstalleerd."
-            )
 
-        if hasattr(os, "add_dll_directory"):
-            _VLC_DLL_HANDLES.append(os.add_dll_directory(str(vlc_dir)))
-        os.environ["PYTHON_VLC_LIB_PATH"] = str(vlc_dir / "libvlc.dll")
-        plugin_dir = vlc_dir / "plugins"
-        if plugin_dir.is_dir():
-            os.environ["VLC_PLUGIN_PATH"] = str(plugin_dir)
-
-        import vlc
-        self.vlc_module = vlc
-        return vlc
+    def _vlc_send(self, command):
+        """Stuur een opdracht naar de geïsoleerde VLC-procesinstantie."""
+        if self.vlc_socket is None and self.vlc_port is not None:
+            try:
+                self.vlc_socket = socket.create_connection(
+                    ("127.0.0.1", self.vlc_port), timeout=0.25
+                )
+                self.vlc_socket.settimeout(0.25)
+            except OSError:
+                self.vlc_socket = None
+                return False
+        if self.vlc_socket is None:
+            return False
+        try:
+            self.vlc_socket.sendall((command + "\\n").encode("utf-8"))
+            return True
+        except OSError:
+            try:
+                self.vlc_socket.close()
+            except OSError:
+                pass
+            self.vlc_socket = None
+            return False
 
     def toggle_video_playback(self):
-        """Start, pauzeer of hervat VLC in het rechter Medium-venster."""
+        """Speel video via een apart VLC-proces af in het HWND van het rechtervenster."""
         media = self.selected
         if not media or not media.is_video:
             return
         try:
-            if self.vlc_player is None:
-                vlc = self._load_vlc_module()
+            if self.vlc_process is None:
                 self.stop_video_playback(reset_preview=False)
+                vlc_exe = self._find_vlc_executable()
                 self.root.update_idletasks()
-                self.preview.configure(image="", text="")
-                instance = vlc.Instance(
-                    "--no-video-title-show",
-                    "--quiet",
-                    "--no-snapshot-preview",
-                )
-                if instance is None:
-                    raise RuntimeError("VLC kon niet worden gestart. Controleer de VLC-installatie.")
-                player = instance.media_player_new()
-                if player is None:
-                    instance.release()
-                    raise RuntimeError("VLC kon geen videospeler aanmaken.")
+                self.preview.pack_forget()
+                self.video_surface.pack(fill="both", expand=True, padx=6, pady=6)
+                self.video_surface.update_idletasks()
 
-                # Bewaar de objecten direct zodat de foutafhandeling ze altijd kan vrijgeven.
-                self.vlc_instance = instance
-                self.vlc_player = player
-                player.set_hwnd(self.preview.winfo_id())
-                player.audio_set_volume(75)
-                video = instance.media_new(str(media.path))
-                player.set_media(video)
-                result = player.play()
-                if result == -1:
-                    raise RuntimeError("VLC kon dit videobestand niet openen.")
+                # Kies een vrije lokale poort voor VLC's beperkte RC-besturing.
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind(("127.0.0.1", 0))
+                    port = probe.getsockname()[1]
+                hwnd = self.video_surface.winfo_id()
+                command = [
+                    str(vlc_exe),
+                    "--intf=dummy",
+                    "--extraintf=rc",
+                    f"--rc-host=127.0.0.1:{port}",
+                    "--no-video-title-show",
+                    "--no-one-instance",
+                    f"--drawable-hwnd={hwnd}",
+                    str(media.path),
+                ]
+                self.vlc_port = port
+                self.vlc_process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_stop_button.configure(state="normal")
-                self.video_status.configure(text="Afspelen via VLC…")
+                self.video_status.configure(text="Afspelen via VLC in MediaVerkenner…")
                 self._schedule_vlc_poll()
                 return
 
             if self.video_playing:
-                self.vlc_player.set_pause(1)
+                if not self._vlc_send("pause"):
+                    raise RuntimeError("De verbinding met de VLC-speler is weggevallen.")
                 self.video_playing = False
                 self.video_play_button.configure(text="▶ Verder")
                 self.video_status.configure(text="Gepauzeerd")
             else:
-                self.vlc_player.set_pause(0)
+                if not self._vlc_send("pause"):
+                    raise RuntimeError("De verbinding met de VLC-speler is weggevallen.")
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_status.configure(text="Afspelen via VLC…")
@@ -1930,7 +1948,7 @@ class App:
             self.video_status.configure(text="VLC kon niet starten")
             messagebox.showerror(
                 "Video afspelen mislukt",
-                f"VLC kon de video niet in MediaVerkenner afspelen.\n\n{error}",
+                f"VLC kon de video niet in MediaVerkenner afspelen.\\n\\n{error}",
                 parent=self.root
             )
 
@@ -1940,29 +1958,22 @@ class App:
                 self.root.after_cancel(self.video_poll_job)
             except tk.TclError:
                 pass
-        if self.vlc_player is not None:
+        if self.vlc_process is not None:
             self.video_poll_job = self.root.after(500, self._poll_vlc_state)
 
     def _poll_vlc_state(self):
         self.video_poll_job = None
-        player = self.vlc_player
-        if player is None:
+        process = self.vlc_process
+        if process is None:
             return
-        try:
-            state = player.get_state()
-            vlc = self.vlc_module
-            if state == vlc.State.Ended:
-                self.stop_video_playback(reset_preview=True)
-                self.video_status.configure(text="Video afgelopen")
-                return
-            if state == vlc.State.Error:
-                self.stop_video_playback(reset_preview=True)
-                self.video_status.configure(text="VLC kan dit videobestand niet afspelen")
-                return
-        except Exception as error:
+        code = process.poll()
+        if code is not None:
             self.stop_video_playback(reset_preview=True)
-            self.video_status.configure(text=f"VLC-afspeelfout: {error}")
+            self.video_status.configure(text=f"VLC is gestopt (code {code})")
             return
+        # De RC-poort kan iets later beschikbaar komen dan het proces.
+        if self.vlc_socket is None:
+            self._vlc_send(" ")
         self._schedule_vlc_poll()
 
     def stop_video_playback(self, reset_preview=True):
@@ -1972,28 +1983,33 @@ class App:
             except (tk.TclError, AttributeError):
                 pass
             self.video_poll_job = None
-        player = self.vlc_player
-        instance = self.vlc_instance
-        self.vlc_player = None
-        self.vlc_instance = None
+        process = self.vlc_process
+        self.vlc_process = None
+        if self.vlc_socket is not None:
+            try:
+                self.vlc_socket.sendall(b"quit\\n")
+                self.vlc_socket.close()
+            except OSError:
+                pass
+            self.vlc_socket = None
+        self.vlc_port = None
+        if process is not None:
+            try:
+                process.wait(timeout=1.5)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
         self.video_playing = False
-        if player is not None:
-            try:
-                player.stop()
-            except Exception:
-                pass
-            try:
-                player.release()
-            except Exception:
-                pass
-        if instance is not None:
-            try:
-                instance.release()
-            except Exception:
-                pass
         if hasattr(self, "video_play_button"):
             self.video_play_button.configure(text="▶ Afspelen")
             self.video_stop_button.configure(state="disabled")
+        if hasattr(self, "video_surface"):
+            self.video_surface.pack_forget()
+        if hasattr(self, "preview") and not self.preview.winfo_manager():
+            self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         if reset_preview and getattr(self, "selected", None) and self.selected.is_video:
             self.render_preview()
 
