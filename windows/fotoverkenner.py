@@ -35,7 +35,8 @@ try:
 except Exception:
     tkintermapview = None
 
-# Windows Media Player ActiveX wordt pas bij het starten van video geladen.
+# VLC wordt pas geladen wanneer een video wordt afgespeeld.
+_VLC_DLL_HANDLES = []
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".3gp", ".mts", ".m2ts"}
@@ -196,10 +197,10 @@ class App:
         self.status = tk.StringVar(value="Kies een mediamap om media te bekijken.")
         self.preview_photo = None
         self.video_playing = False
-        self.wmp_control = None
-        self.wmp_hwnd = None
-        self.wmp_atl = None
-        self.wmp_com_initialized = False
+        self.vlc_instance = None
+        self.vlc_player = None
+        self.vlc_module = None
+        self.video_poll_job = None
         self.map_widget = None
         self.map_marker = None
         self.map_markers = []
@@ -1157,22 +1158,6 @@ class App:
         """Herlaad pas na een echte formaatwijziging; voorkom configure-lussen."""
         if not self.selected or event is None:
             return
-        if self.wmp_hwnd:
-            try:
-                user32 = ctypes.WinDLL("user32", use_last_error=True)
-                user32.SetWindowPos.argtypes = [
-                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                    ctypes.c_int, ctypes.c_int, wintypes.UINT
-                ]
-                user32.SetWindowPos.restype = wintypes.BOOL
-                user32.SetWindowPos(
-                    wintypes.HWND(self.wmp_hwnd), None, 0, 0,
-                    max(1, self.preview.winfo_width()),
-                    max(1, self.preview.winfo_height()), 0x0004 | 0x0010
-                )
-            except Exception:
-                pass
-            return
         requested = self.preview_requested_size
         if requested and abs(event.width - requested[0]) < 36 and abs(event.height - requested[1]) < 36:
             return
@@ -1839,124 +1824,173 @@ class App:
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
 
-    def _create_windows_media_player(self, path):
-        """Host de Windows Media Player ActiveX-control in het rechter Medium-venster."""
+    def _load_vlc_module(self):
+        """Laad de VLC-installatie die al op deze Windows-pc aanwezig is."""
+        if self.vlc_module is not None:
+            return self.vlc_module
         if sys.platform != "win32":
-            raise RuntimeError("De ingebouwde Windows Media Player is alleen beschikbaar op Windows.")
-        import comtypes
-        from comtypes.client import GetBestInterface
+            raise RuntimeError("VLC-integratie is alleen beschikbaar op Windows.")
 
-        if not self.wmp_com_initialized:
-            comtypes.CoInitialize()
-            self.wmp_com_initialized = True
-
-        atl = ctypes.WinDLL("atl.dll")
-        atl.AtlAxWinInit.restype = wintypes.BOOL
-        if not atl.AtlAxWinInit():
-            raise OSError("Windows kon de ActiveX-host voor Media Player niet initialiseren.")
-
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.CreateWindowExW.restype = wintypes.HWND
-        user32.CreateWindowExW.argtypes = [
-            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID
-        ]
-        user32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
-        user32.GetModuleHandleW.restype = wintypes.HMODULE
-        user32.DestroyWindow.argtypes = [wintypes.HWND]
-        user32.DestroyWindow.restype = wintypes.BOOL
-
-        self.root.update_idletasks()
-        parent = wintypes.HWND(self.preview.winfo_id())
-        width = max(1, self.preview.winfo_width())
-        height = max(1, self.preview.winfo_height())
-        player_clsid = "{6BF52A52-394A-11d3-B153-00C04F79FAA6}"
-        style = 0x40000000 | 0x10000000 | 0x02000000 | 0x04000000
-        hwnd = user32.CreateWindowExW(
-            0, "AtlAxWin", player_clsid, style,
-            0, 0, width, height, parent, None,
-            user32.GetModuleHandleW(None), None
-        )
-        if not hwnd:
-            raise ctypes.WinError(ctypes.get_last_error())
-
+        candidates = []
         try:
-            unknown = ctypes.POINTER(comtypes.IUnknown)()
-            atl.AtlAxGetControl.argtypes = [
-                wintypes.HWND, ctypes.POINTER(ctypes.POINTER(comtypes.IUnknown))
-            ]
-            atl.AtlAxGetControl.restype = ctypes.c_long
-            result = atl.AtlAxGetControl(hwnd, ctypes.byref(unknown))
-            if result != 0 or not unknown:
-                raise OSError(f"Windows Media Player-control kon niet worden geladen (HRESULT 0x{result & 0xffffffff:08X}).")
-
-            control = GetBestInterface(unknown)
-            control.uiMode = "none"
-            control.stretchToFit = True
-            control.settings.autoStart = True
-            control.settings.volume = 75
-            control.URL = str(path)
-            control.controls.play()
-
-            self.wmp_atl = atl
-            self.wmp_hwnd = hwnd
-            self.wmp_control = control
+            import winreg
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                for key_name in (
+                    r"SOFTWARE\VideoLAN\VLC",
+                    r"SOFTWARE\WOW6432Node\VideoLAN\VLC",
+                ):
+                    try:
+                        with winreg.OpenKey(hive, key_name) as key:
+                            install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
+                            candidates.append(Path(install_dir))
+                    except OSError:
+                        pass
         except Exception:
-            user32.DestroyWindow(hwnd)
-            raise
+            pass
+
+        for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+            base = os.environ.get(env_name)
+            if base:
+                candidates.append(Path(base) / "VideoLAN" / "VLC")
+
+        vlc_dir = next(
+            (folder for folder in candidates if (folder / "libvlc.dll").is_file()),
+            None
+        )
+        if vlc_dir is None:
+            raise FileNotFoundError(
+                "MediaVerkenner kan VLC niet vinden. Controleer of VLC Media Player "
+                "(64-bits) is geïnstalleerd."
+            )
+
+        if hasattr(os, "add_dll_directory"):
+            _VLC_DLL_HANDLES.append(os.add_dll_directory(str(vlc_dir)))
+        os.environ["PYTHON_VLC_LIB_PATH"] = str(vlc_dir / "libvlc.dll")
+        plugin_dir = vlc_dir / "plugins"
+        if plugin_dir.is_dir():
+            os.environ["VLC_PLUGIN_PATH"] = str(plugin_dir)
+
+        import vlc
+        self.vlc_module = vlc
+        return vlc
 
     def toggle_video_playback(self):
-        """Start of pauzeer video via de Windows Media Player in het rechter Medium-venster."""
+        """Start, pauzeer of hervat VLC in het rechter Medium-venster."""
         media = self.selected
         if not media or not media.is_video:
             return
         try:
-            if self.wmp_control is None:
-                self._create_windows_media_player(media.path)
+            if self.vlc_player is None:
+                vlc = self._load_vlc_module()
+                self.stop_video_playback(reset_preview=False)
+                self.root.update_idletasks()
+                self.preview.configure(image="", text="")
+                instance = vlc.Instance(
+                    "--no-video-title-show",
+                    "--quiet",
+                    "--no-snapshot-preview",
+                )
+                if instance is None:
+                    raise RuntimeError("VLC kon niet worden gestart. Controleer de VLC-installatie.")
+                player = instance.media_player_new()
+                if player is None:
+                    instance.release()
+                    raise RuntimeError("VLC kon geen videospeler aanmaken.")
+
+                player.set_hwnd(self.preview.winfo_id())
+                player.audio_set_volume(75)
+                video = instance.media_new(str(media.path))
+                player.set_media(video)
+                result = player.play()
+                if result == -1:
+                    player.release()
+                    instance.release()
+                    raise RuntimeError("VLC kon dit videobestand niet openen.")
+
+                self.vlc_instance = instance
+                self.vlc_player = player
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_stop_button.configure(state="normal")
-                self.video_status.configure(text="Afspelen via Windows Media Player…")
+                self.video_status.configure(text="Afspelen via VLC…")
+                self._schedule_vlc_poll()
                 return
 
             if self.video_playing:
-                self.wmp_control.controls.pause()
+                self.vlc_player.set_pause(1)
                 self.video_playing = False
                 self.video_play_button.configure(text="▶ Verder")
                 self.video_status.configure(text="Gepauzeerd")
             else:
-                self.wmp_control.controls.play()
+                self.vlc_player.set_pause(0)
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
-                self.video_status.configure(text="Afspelen via Windows Media Player…")
+                self.video_status.configure(text="Afspelen via VLC…")
+                self._schedule_vlc_poll()
         except Exception as error:
             self.stop_video_playback(reset_preview=True)
-            self.video_status.configure(text="Windows Media Player kon niet starten")
+            self.video_status.configure(text="VLC kon niet starten")
             messagebox.showerror(
                 "Video afspelen mislukt",
-                f"De Windows Media Player kon niet in MediaVerkenner worden gestart.\n\n{error}",
+                f"VLC kon de video niet in MediaVerkenner afspelen.\n\n{error}",
                 parent=self.root
             )
 
-    def stop_video_playback(self, reset_preview=True):
-        control = self.wmp_control
-        hwnd = self.wmp_hwnd
-        self.wmp_control = None
-        self.wmp_hwnd = None
-        self.wmp_atl = None
-        self.video_playing = False
-        if control is not None:
+    def _schedule_vlc_poll(self):
+        if self.video_poll_job is not None:
             try:
-                control.controls.stop()
+                self.root.after_cancel(self.video_poll_job)
+            except tk.TclError:
+                pass
+        if self.vlc_player is not None:
+            self.video_poll_job = self.root.after(500, self._poll_vlc_state)
+
+    def _poll_vlc_state(self):
+        self.video_poll_job = None
+        player = self.vlc_player
+        if player is None:
+            return
+        try:
+            state = player.get_state()
+            vlc = self.vlc_module
+            if state == vlc.State.Ended:
+                self.stop_video_playback(reset_preview=True)
+                self.video_status.configure(text="Video afgelopen")
+                return
+            if state == vlc.State.Error:
+                self.stop_video_playback(reset_preview=True)
+                self.video_status.configure(text="VLC kan dit videobestand niet afspelen")
+                return
+        except Exception as error:
+            self.stop_video_playback(reset_preview=True)
+            self.video_status.configure(text=f"VLC-afspeelfout: {error}")
+            return
+        self._schedule_vlc_poll()
+
+    def stop_video_playback(self, reset_preview=True):
+        if self.video_poll_job is not None:
+            try:
+                self.root.after_cancel(self.video_poll_job)
+            except (tk.TclError, AttributeError):
+                pass
+            self.video_poll_job = None
+        player = self.vlc_player
+        instance = self.vlc_instance
+        self.vlc_player = None
+        self.vlc_instance = None
+        self.video_playing = False
+        if player is not None:
+            try:
+                player.stop()
             except Exception:
                 pass
-        if hwnd:
             try:
-                user32 = ctypes.WinDLL("user32", use_last_error=True)
-                user32.DestroyWindow.argtypes = [wintypes.HWND]
-                user32.DestroyWindow.restype = wintypes.BOOL
-                user32.DestroyWindow(wintypes.HWND(hwnd))
+                player.release()
+            except Exception:
+                pass
+        if instance is not None:
+            try:
+                instance.release()
             except Exception:
                 pass
         if hasattr(self, "video_play_button"):
