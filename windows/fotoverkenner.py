@@ -1368,7 +1368,7 @@ class App:
         return self._keyboard_navigate_media(1, event)
 
     def _keyboard_navigate_media(self, step, event=None):
-        if self.active_tab != "Medium" or not self.selected:
+        if self.active_tab not in ("Medium", "Gallery") or not self.selected:
             return
         try:
             widget = self.root.focus_get()
@@ -1403,7 +1403,9 @@ class App:
         self.table.focus(row)
         self.table.see(row)
         self.select()
-
+        self.select()
+        # Navigatie met pijltjestoetsen of knoppen toont altijd het gekozen medium.
+        self.show_tab("Medium")
     def show_tab(self, name):
         if name not in self.tab_frames:
             return
