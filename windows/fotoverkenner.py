@@ -1321,19 +1321,19 @@ class App:
             cached = self.gallery_thumb_cache.get(media.path)
             if cached is None:
                 if media.is_video:
-                    cached = video_frame(media.path, (220, 150))
+                    cached = video_frame(media.path, (160, 110))
                 else:
                     with Image.open(media.path) as source:
                         preview = ImageOps.exif_transpose(source)
-                        preview.thumbnail((220, 150), Image.Resampling.LANCZOS)
+                        preview.thumbnail((160, 110), Image.Resampling.LANCZOS)
                         cached = preview.copy()
             if cached is not None:
                 photo = ImageTk.PhotoImage(cached)
-                thumb.configure(image=photo, text="", width=220, height=150)
+                thumb.configure(image=photo, text="", width=160, height=110)
                 thumb.image = photo
         except Exception:
             pass
-        # Een Tk Text-veld ondersteunt echte muisselectie van de volledige naam.
+        # Een alleen-lezen invoerveld ondersteunt muisselectie en kopiëren.
         filename_field = tk.Entry(
             tile, relief="flat", readonlybackground="#ffffff",
             exportselection=False, font=("Segoe UI", 9), justify="center"
@@ -1346,8 +1346,8 @@ class App:
             lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1]
         )
         filename_field.bind("<Control-c>", self.copy_text_selection)
-        ttk.Label(tile, text=str(media.path.parent), wraplength=220, foreground="#555555").pack(fill="x")
-        ttk.Label(tile, text=reason, wraplength=220, foreground="#555555").pack(fill="x", pady=(3, 4))
+        ttk.Label(tile, text=str(media.path.parent), wraplength=160, foreground="#555555").pack(fill="x")
+        ttk.Label(tile, text=reason, wraplength=160, foreground="#555555").pack(fill="x", pady=(3, 4))
         if mandatory:
             ttk.Label(tile, text="☑ Wordt verwijderd", foreground="#9b1c1c",
                       font=("Segoe UI", 9, "bold")).pack(anchor="w")
