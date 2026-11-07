@@ -501,7 +501,7 @@ class App:
         self.video_stop_button = ttk.Button(video_actions, text="■ Stoppen", command=self.stop_video_playback, state="disabled")
         self.video_stop_button.pack(side="left", padx=(6, 0))
         self.video_fullscreen_button = ttk.Button(
-            video_actions, text="⛶ Volledig scherm",
+            video_actions, text="⛶ Volledig scherm (tijdelijk uit)",
             command=self.toggle_video_fullscreen, state="disabled"
         )
         self.video_fullscreen_button.pack(side="left", padx=(6, 0))
@@ -1898,97 +1898,20 @@ class App:
             self.vlc_socket = None
             return False
 
-    def _fullscreen_user32(self):
-        """Laad User32 met pointer-veilige HWND/LONG_PTR-signatures (ook 64-bit)."""
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.IsWindow.argtypes = [wintypes.HWND]
-        user32.IsWindow.restype = wintypes.BOOL
-        user32.GetParent.argtypes = [wintypes.HWND]
-        user32.GetParent.restype = wintypes.HWND
-        user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
-        user32.SetParent.restype = wintypes.HWND
-        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-        user32.GetSystemMetrics.restype = ctypes.c_int
-        user32.SetWindowPos.argtypes = [
-            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-            ctypes.c_int, ctypes.c_int, wintypes.UINT
-        ]
-        user32.SetWindowPos.restype = wintypes.BOOL
-        get_style = getattr(user32, "GetWindowLongPtrW")
-        get_style.argtypes = [wintypes.HWND, ctypes.c_int]
-        get_style.restype = ctypes.c_ssize_t
-        set_style = getattr(user32, "SetWindowLongPtrW")
-        set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-        set_style.restype = ctypes.c_ssize_t
-        return user32, get_style, set_style
-
     def toggle_video_fullscreen(self):
-        """Maak het ingebedde videovenster schermvullend; Escape herstelt de indeling."""
-        if self.vlc_process is None or sys.platform != "win32":
-            return
-        if self.video_fullscreen:
-            self.exit_video_fullscreen()
-            return
-        try:
-            user32, get_style, set_style = self._fullscreen_user32()
-            self.root.update_idletasks()
-            self.video_surface.update_idletasks()
-            hwnd = wintypes.HWND(self.video_surface.winfo_id())
-            if not user32.IsWindow(hwnd):
-                raise RuntimeError("Het VLC-videovenster bestaat niet meer (ongeldige HWND).")
-
-            # Bewaar de originele parent en stijl. Gebruik expliciete pointer-grootte
-            # API-signatures: ctypes' standaard c_int kapt HWND's op 64-bit Windows af.
-            self.video_fullscreen_parent = user32.GetParent(hwnd)
-            self.video_fullscreen_style = get_style(hwnd, -16)
-            self.video_surface.pack_forget()
-            popup_style = (self.video_fullscreen_style & ~0x40000000) | 0x80000000
-            ctypes.set_last_error(0)
-            previous_parent = user32.SetParent(hwnd, wintypes.HWND(0))
-            if not previous_parent and ctypes.get_last_error():
-                raise ctypes.WinError(ctypes.get_last_error())
-            set_style(hwnd, -16, popup_style)
-            width = user32.GetSystemMetrics(0)
-            height = user32.GetSystemMetrics(1)
-            if not user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, width, height, 0x0040 | 0x0004):
-                raise ctypes.WinError(ctypes.get_last_error())
-            self.video_fullscreen = True
-            self.video_fullscreen_button.configure(text="⛶ Venster herstellen")
-            self.video_status.configure(text="Volledig scherm — druk op Escape om terug te keren")
-            self.root.bind_all("<Escape>", self._fullscreen_escape, add="+")
-        except Exception as error:
-            self.exit_video_fullscreen()
-            self.video_status.configure(text=f"Volledig scherm niet beschikbaar: {error}")
+        """Fullscreen is tijdelijk uitgeschakeld; HWND-loskoppeling bleek instabiel."""
+        self.video_status.configure(
+            text="Volledig scherm is tijdelijk uitgeschakeld om videoweergave stabiel te houden."
+        )
 
     def _fullscreen_escape(self, _event=None):
-        if self.video_fullscreen:
-            self.exit_video_fullscreen()
-            return "break"
+        return None
 
     def exit_video_fullscreen(self):
-        """Herstel het videovenster naar de oorspronkelijke Tkinter-indeling."""
-        if not getattr(self, "video_fullscreen", False):
-            return
-        try:
-            user32, _get_style, set_style = self._fullscreen_user32()
-            hwnd = wintypes.HWND(self.video_surface.winfo_id())
-            parent = self.video_fullscreen_parent
-            style = self.video_fullscreen_style
-            if user32.IsWindow(hwnd):
-                ctypes.set_last_error(0)
-                user32.SetParent(hwnd, parent)
-                if style is not None:
-                    set_style(hwnd, -16, style)
-                user32.SetWindowPos(hwnd, wintypes.HWND(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020 | 0x0040)
-        finally:
-            self.video_fullscreen = False
-            self.video_fullscreen_parent = None
-            self.video_fullscreen_style = None
-            if hasattr(self, "video_fullscreen_button"):
-                self.video_fullscreen_button.configure(text="⛶ Volledig scherm")
-            if hasattr(self, "video_surface") and self.vlc_process is not None:
-                self.video_surface.pack(fill="both", expand=True, padx=6, pady=6, before=self.video_actions)
-                self.video_surface.update_idletasks()
+        """Geen vensterwijzigingen uitvoeren; videovenster blijft in Tkinter ingebed."""
+        self.video_fullscreen = False
+        self.video_fullscreen_parent = None
+        self.video_fullscreen_style = None
 
     def toggle_video_playback(self):
         """Speel video via een apart VLC-proces af in het HWND van het rechtervenster."""
@@ -2038,7 +1961,7 @@ class App:
                 self.video_playing = True
                 self.video_play_button.configure(text="Pauzeren")
                 self.video_stop_button.configure(state="normal")
-                self.video_fullscreen_button.configure(state="normal")
+                self.video_fullscreen_button.configure(state="disabled")
                 self.video_status.configure(text="Afspelen via VLC in MediaVerkenner…")
                 self._schedule_vlc_poll()
                 return
