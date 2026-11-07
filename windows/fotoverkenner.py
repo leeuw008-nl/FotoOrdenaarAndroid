@@ -1045,23 +1045,33 @@ class App:
         if not hasattr(self, "gallery_inner"):
             return
         self.gallery_generation += 1
-        generation = self.gallery_generation
+        self.gallery_render_generation = self.gallery_generation
         self.gallery_thumb_labels = {}
         for child in self.gallery_inner.winfo_children():
             child.destroy()
-        media_items = list(self.filtered)
-        self.gallery_count.configure(text=str(len(media_items)) + " items")
+        self.gallery_render_items = list(self.filtered)
+        self.gallery_render_offset = 0
+        self.gallery_count.configure(text=str(len(self.gallery_render_items)) + " items")
         folder = self.active_folder or self.folder
         self.gallery_heading.configure(text="Gallery - " + (folder.name if folder else "geen album geselecteerd"))
-        if not media_items:
+        if not self.gallery_render_items:
             ttk.Label(self.gallery_inner, text="Geen media in deze map of onderliggende mappen.").grid(row=0, column=0, sticky="w", padx=12, pady=12)
             self.update_tab_colors()
             return
-        for index, media in enumerate(media_items):
+        self.render_gallery_batch(self.gallery_render_generation)
+
+    def render_gallery_batch(self, generation):
+        """Bouw de Gallery in kleine porties om grote albums beheersbaar te houden."""
+        if generation != self.gallery_generation:
+            return
+        start = self.gallery_render_offset
+        end = min(start + 120, len(self.gallery_render_items))
+        for index in range(start, end):
+            media = self.gallery_render_items[index]
             tile = ttk.Frame(self.gallery_inner, relief="ridge", padding=4)
             tile.grid(row=index // 4, column=index % 4, sticky="nsew", padx=4, pady=4)
             tile.columnconfigure(0, weight=1)
-            thumb = tk.Label(tile, text="VIDEO" if media.is_video else "Laden...", anchor="center", width=20, height=7, bg="#e5e7eb", fg="#374151")
+            thumb = tk.Label(tile, text="VIDEO" if media.is_video else "Laden...", anchor="center", width=20, height=7, bg="#EFF5FB", fg="#0F457A")
             thumb.grid(row=0, column=0, sticky="nsew")
             thumb.bind("<Button-1>", lambda _e, item=media: self.select_gallery_item(item))
             name = ttk.Label(tile, text=media.path.name, wraplength=160, justify="center")
@@ -1076,6 +1086,19 @@ class App:
             else:
                 self.thumbnail_jobs += 1
                 self.thumbnail_executor.submit(self.load_gallery_thumbnail, generation, media.path)
+        self.gallery_render_offset = end
+        if end < len(self.gallery_render_items):
+            if hasattr(self, "gallery_more_button") and self.gallery_more_button.winfo_exists():
+                self.gallery_more_button.destroy()
+            remaining = len(self.gallery_render_items) - end
+            self.gallery_more_button = ttk.Button(
+                self.gallery_inner,
+                text=f"Meer laden ({remaining} resterend)",
+                command=lambda: self.render_gallery_batch(generation)
+            )
+            self.gallery_more_button.grid(row=(end + 3) // 4, column=0, columnspan=4, sticky="ew", padx=6, pady=10)
+        elif hasattr(self, "gallery_more_button") and self.gallery_more_button.winfo_exists():
+            self.gallery_more_button.destroy()
         self.layout_gallery()
         self.root.after(100, self.poll_gallery_thumbnails)
 
