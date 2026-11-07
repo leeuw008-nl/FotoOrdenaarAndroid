@@ -181,6 +181,7 @@ class App:
         self.folder: Path | None = None
         self.active_folder: Path | None = None
         self.items: list[Media] = []
+        self.item_index_by_path: dict[Path, Media] = {}
         self.filtered: list[Media] = []
         self.selected: Media | None = None
         self.sort = tk.StringVar(value="Bestandsdatum")
@@ -471,7 +472,7 @@ class App:
             self.tab_buttons[name] = button
         self.show_tab("Medium")
 
-        self.preview = ttk.Label(image_tab, text="Selecteer een medium", anchor="center")
+        self.preview = ttk.Label(image_tab, text="Selecteer een medium", anchor="center", takefocus=True)
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         self.preview.bind("<Configure>", self.resize_preview)
         image_actions = ttk.Frame(image_tab)
@@ -616,6 +617,7 @@ class App:
         root_folder = self.folder
         self.scan_running = True
         self.items = []
+        self.item_index_by_path = {}
         self.filtered = []
         self.table.delete(*self.table.get_children())
         self.clear_detail_panels()
@@ -679,17 +681,22 @@ class App:
                 self.status.set(f"Bestanden inventariseren… {payload} gevonden")
             elif kind == "inventory_done":
                 self.items = payload
+                # Eenmalige index: niet voor iedere metadata-batch opnieuw de
+                # volledige inventaris doorlopen (dat maakte de UI steeds trager).
+                self.item_index_by_path = {media.path: media for media in self.items}
                 self.scan_running = False
                 self.filter()
                 self.status.set(f"{len(self.items)} bestanden getoond; metadata wordt nu opgehaald…")
                 self.update_tab_colors()
                 self.start_metadata_scan(generation)
             elif kind == "metadata_batch":
-                path_indexes = {item.path: index for index, item in enumerate(self.items)}
                 for enriched in payload:
-                    index = path_indexes.get(enriched.path)
-                    if index is not None:
-                        self.items[index] = enriched
+                    original = self.item_index_by_path.get(enriched.path)
+                    if original is not None:
+                        # Werk het bestaande object bij zodat Gallery, selectie en
+                        # inventaris dezelfde verwijzing blijven gebruiken.
+                        for field in ("capture", "lat", "lon", "place", "width", "height", "camera", "duration", "fps", "codec"):
+                            setattr(original, field, getattr(enriched, field))
             elif kind == "metadata_progress":
                 self.status.set(f"Metadata lezen… {payload} bestanden verwerkt")
             elif kind == "metadata_done":
@@ -846,11 +853,9 @@ class App:
             self.active_folder = path
             self.update_breadcrumb()
             self.filter()
-            if self.album_map_enabled.get():
-                self.album_map_path = path
-                self.show_album_on_map(path, switch_tab=False)
-            else:
-                self.album_map_path = None
+            # Albuminhoud krijgt voorrang. Kaartspelden worden pas opgebouwd
+            # wanneer de gebruiker daadwerkelijk het tabblad Kaart opent.
+            self.map_content_available = False
             self.show_tab("Gallery")
 
     def update_breadcrumb(self):
@@ -1066,6 +1071,19 @@ class App:
         self.update_map()
         self.update_tab_colors()
         self.show_tab("Medium")
+        self.root.after_idle(self.focus_media_navigation)
+
+    def focus_media_navigation(self):
+        """Geef pijltjestoetsen focus aan de mediabediening, niet aan de albumboom."""
+        try:
+            if str(self.next_media_button.cget("state")) != "disabled":
+                self.next_media_button.focus_set()
+            elif str(self.previous_media_button.cget("state")) != "disabled":
+                self.previous_media_button.focus_set()
+            else:
+                self.preview.focus_set()
+        except tk.TclError:
+            pass
 
     def highlight_media_album(self, media):
         """Markeer de map van het gekozen bestand zonder de huidige bestandenlijst te filteren."""
@@ -1464,6 +1482,8 @@ class App:
             return
         self.active_tab = name
         self.tab_frames[name].tkraise()
+        if name == "Kaart" and self.album_context_active and self.album_map_path:
+            self.show_album_on_map(self.album_map_path, switch_tab=False)
         self.update_tab_colors()
 
     def set_media_tabs_visible(self, visible):
