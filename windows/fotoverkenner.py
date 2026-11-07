@@ -1897,18 +1897,16 @@ class App:
                     instance.release()
                     raise RuntimeError("VLC kon geen videospeler aanmaken.")
 
+                # Bewaar de objecten direct zodat de foutafhandeling ze altijd kan vrijgeven.
+                self.vlc_instance = instance
+                self.vlc_player = player
                 player.set_hwnd(self.preview.winfo_id())
                 player.audio_set_volume(75)
                 video = instance.media_new(str(media.path))
                 player.set_media(video)
                 result = player.play()
                 if result == -1:
-                    player.release()
-                    instance.release()
                     raise RuntimeError("VLC kon dit videobestand niet openen.")
-
-                self.vlc_instance = instance
-                self.vlc_player = player
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_stop_button.configure(state="normal")
