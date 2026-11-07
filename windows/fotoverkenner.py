@@ -1897,7 +1897,7 @@ class App:
                 vlc_exe = self._find_vlc_executable()
                 self.root.update_idletasks()
                 self.preview.pack_forget()
-                self.video_surface.pack(fill="both", expand=True, padx=6, pady=6)
+                self.video_surface.pack(fill="both", expand=True, padx=6, pady=6, before=self.video_actions)
                 self.video_surface.update_idletasks()
 
                 # Kies een vrije lokale poort voor VLC's beperkte RC-besturing.
@@ -2009,7 +2009,7 @@ class App:
         if hasattr(self, "video_surface"):
             self.video_surface.pack_forget()
         if hasattr(self, "preview") and not self.preview.winfo_manager():
-            self.preview.pack(fill="both", expand=True, padx=6, pady=6)
+            self.preview.pack(fill="both", expand=True, padx=6, pady=6, before=self.video_actions)
         if reset_preview and getattr(self, "selected", None) and self.selected.is_video:
             self.render_preview()
 
