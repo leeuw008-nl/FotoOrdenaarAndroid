@@ -1898,6 +1898,30 @@ class App:
             self.vlc_socket = None
             return False
 
+    def _fullscreen_user32(self):
+        """Laad User32 met pointer-veilige HWND/LONG_PTR-signatures (ook 64-bit)."""
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+        user32.SetParent.restype = wintypes.HWND
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        get_style = getattr(user32, "GetWindowLongPtrW")
+        get_style.argtypes = [wintypes.HWND, ctypes.c_int]
+        get_style.restype = ctypes.c_ssize_t
+        set_style = getattr(user32, "SetWindowLongPtrW")
+        set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_style.restype = ctypes.c_ssize_t
+        return user32, get_style, set_style
+
     def toggle_video_fullscreen(self):
         """Maak het ingebedde videovenster schermvullend; Escape herstelt de indeling."""
         if self.vlc_process is None or sys.platform != "win32":
@@ -1906,24 +1930,28 @@ class App:
             self.exit_video_fullscreen()
             return
         try:
-            user32 = ctypes.windll.user32
-            hwnd = self.video_surface.winfo_id()
+            user32, get_style, set_style = self._fullscreen_user32()
             self.root.update_idletasks()
             self.video_surface.update_idletasks()
+            hwnd = wintypes.HWND(self.video_surface.winfo_id())
+            if not user32.IsWindow(hwnd):
+                raise RuntimeError("Het VLC-videovenster bestaat niet meer (ongeldige HWND).")
 
-            # Bewaar de oorspronkelijke Windows-parent en stijl. VLC blijft
-            # renderen in exact hetzelfde HWND; alleen dat venster wordt tijdelijk
-            # een schermvullend popup-venster.
+            # Bewaar de originele parent en stijl. Gebruik expliciete pointer-grootte
+            # API-signatures: ctypes' standaard c_int kapt HWND's op 64-bit Windows af.
             self.video_fullscreen_parent = user32.GetParent(hwnd)
-            self.video_fullscreen_style = user32.GetWindowLongW(hwnd, -16)
+            self.video_fullscreen_style = get_style(hwnd, -16)
             self.video_surface.pack_forget()
             popup_style = (self.video_fullscreen_style & ~0x40000000) | 0x80000000
-            user32.SetParent(hwnd, 0)
-            user32.SetWindowLongW(hwnd, -16, popup_style)
+            ctypes.set_last_error(0)
+            previous_parent = user32.SetParent(hwnd, wintypes.HWND(0))
+            if not previous_parent and ctypes.get_last_error():
+                raise ctypes.WinError(ctypes.get_last_error())
+            set_style(hwnd, -16, popup_style)
             width = user32.GetSystemMetrics(0)
             height = user32.GetSystemMetrics(1)
-            if not user32.SetWindowPos(hwnd, -1, 0, 0, width, height, 0x0040 | 0x0004):
-                raise ctypes.WinError()
+            if not user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, width, height, 0x0040 | 0x0004):
+                raise ctypes.WinError(ctypes.get_last_error())
             self.video_fullscreen = True
             self.video_fullscreen_button.configure(text="⛶ Venster herstellen")
             self.video_status.configure(text="Volledig scherm — druk op Escape om terug te keren")
@@ -1942,14 +1970,16 @@ class App:
         if not getattr(self, "video_fullscreen", False):
             return
         try:
-            user32 = ctypes.windll.user32
-            hwnd = self.video_surface.winfo_id()
+            user32, _get_style, set_style = self._fullscreen_user32()
+            hwnd = wintypes.HWND(self.video_surface.winfo_id())
             parent = self.video_fullscreen_parent
             style = self.video_fullscreen_style
-            user32.SetParent(hwnd, parent)
-            if style is not None:
-                user32.SetWindowLongW(hwnd, -16, style)
-            user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020 | 0x0040)
+            if user32.IsWindow(hwnd):
+                ctypes.set_last_error(0)
+                user32.SetParent(hwnd, parent)
+                if style is not None:
+                    set_style(hwnd, -16, style)
+                user32.SetWindowPos(hwnd, wintypes.HWND(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020 | 0x0040)
         finally:
             self.video_fullscreen = False
             self.video_fullscreen_parent = None
