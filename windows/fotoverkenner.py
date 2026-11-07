@@ -1230,10 +1230,9 @@ class App:
         self.table.selection_set(row)
         self.table.focus(row)
         self.table.see(row)
-        self.show_tab("Medium")
-        # Een gewijzigde Treeview-selectie activeert select() via het bestaande
-        # <<TreeviewSelect>>-event. Roep select() alleen zelf aan als de rij al
-        # geselecteerd was; zo wordt dezelfde foto niet tweemaal geladen.
+        # Bij een nieuwe rij voert het bestaande <<TreeviewSelect>>-event de
+        # selectie uit en schakelt select() zelf naar Medium. Bij dezelfde rij
+        # is er geen event, dus handelen we die situatie hier expliciet af.
         if already_selected:
             self.select()
 
