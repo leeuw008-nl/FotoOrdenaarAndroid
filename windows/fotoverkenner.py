@@ -161,7 +161,7 @@ def video_frame(path, size=(1000, 700)):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("FotoVerkenner")
+        root.title("MediaVerkenner")
         root.geometry("1440x900")
         root.minsize(1000, 650)
 
@@ -175,7 +175,7 @@ class App:
         self.year = tk.StringVar()
         self.month = tk.StringVar()
         self.day = tk.StringVar()
-        self.status = tk.StringVar(value="Kies een fotomap om foto's en video's te bekijken.")
+        self.status = tk.StringVar(value="Kies een mediamap om media te bekijken.")
         self.preview_photo = None
         self.map_widget = None
         self.map_marker = None
@@ -228,7 +228,7 @@ class App:
     def build_ui(self):
         top = ttk.Frame(self.root, padding=(10, 8))
         top.pack(fill="x")
-        ttk.Button(top, text="📁 Fotomap kiezen", command=self.choose).pack(side="left")
+        ttk.Button(top, text="📁 Mediamap kiezen", command=self.choose).pack(side="left")
         self.folder_label = ttk.Label(top, text="Geen map geselecteerd")
         self.folder_label.pack(side="left", padx=12)
         ttk.Label(top, text="Sorteren:").pack(side="left", padx=(18, 4))
@@ -290,7 +290,7 @@ class App:
 
         media_bar = ttk.Frame(media_list)
         media_bar.pack(fill="x", pady=(5, 4))
-        ttk.Label(media_bar, text="🖼 Foto's en video's", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(media_bar, text="🖼 Media", font=("Segoe UI", 10, "bold")).pack(side="left")
         # Treeview-cellen ondersteunen geen tekstselectie; toon de geselecteerde
         # bestandsnaam daarom ook in een echt, readonly invoerveld.
         filename_bar = ttk.Frame(media_list)
@@ -355,7 +355,7 @@ class App:
             self.tab_buttons[name] = button
         self.show_tab("Medium")
 
-        self.preview = ttk.Label(image_tab, text="Selecteer een foto of video", anchor="center")
+        self.preview = ttk.Label(image_tab, text="Selecteer een medium", anchor="center")
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         self.preview.bind("<Configure>", self.resize_preview)
         image_actions = ttk.Frame(image_tab)
@@ -453,7 +453,7 @@ class App:
         ).pack(fill="x", side="bottom")
 
     def choose(self):
-        selected = filedialog.askdirectory(title="Kies de map met foto's en video's")
+        selected = filedialog.askdirectory(title="Kies de map met media")
         if selected:
             self.folder = Path(selected)
             self.active_folder = self.folder
@@ -469,7 +469,7 @@ class App:
             self.delete_button.configure(state="disabled")
         self.preview_photo = None
         if hasattr(self, "preview"):
-            self.preview.configure(image="", text="Selecteer een foto of video")
+            self.preview.configure(image="", text="Selecteer een medium")
         if hasattr(self, "details"):
             self.details.configure(state="normal")
             self.details.delete("1.0", "end")
@@ -513,7 +513,7 @@ class App:
                         self.scan_queue.put((generation, "inventory_progress", checked))
             self.scan_queue.put((generation, "inventory_done", found))
 
-        threading.Thread(target=worker, name="FotoVerkennerInventaris", daemon=True).start()
+        threading.Thread(target=worker, name="MediaVerkennerInventaris", daemon=True).start()
         self.root.after(100, lambda: self.poll_scan(generation))
 
     def start_metadata_scan(self, generation):
@@ -535,7 +535,7 @@ class App:
             if batch:
                 self.scan_queue.put((generation, "metadata_batch", batch))
             self.scan_queue.put((generation, "metadata_done", checked))
-        threading.Thread(target=worker, name="FotoVerkennerMetadata", daemon=True).start()
+        threading.Thread(target=worker, name="MediaVerkennerMetadata", daemon=True).start()
 
     def poll_scan(self, generation):
         if generation != self.scan_generation:
@@ -793,14 +793,14 @@ class App:
             icon = "📄" if media.is_video else "🖼"
             self.table.insert(
                 "", "end", iid=str(index),
-                values=(f"{icon} {media.path.name}", "Video" if media.is_video else "Foto", date_text, size, gps)
+                values=(f"{icon} {media.path.name}", "Video" if media.is_video else "Medium", date_text, size, gps)
             )
         self.render_offset = end
         if end < len(self.filtered):
             self.status.set(f"Weergave opbouwen… {end} van {len(self.filtered)} bestanden")
             self.root.after(1, lambda: self.render_filter_batch(generation, active))
         else:
-            self.status.set(f"{len(self.filtered)} van {len(self.items)} bestanden weergegeven in {active or 'de fotomap'}.")
+            self.status.set(f"{len(self.filtered)} van {len(self.items)} bestanden weergegeven in {active or 'de mediamap'}.")
 
     def sort_column(self, column):
         self.sort.set({
@@ -863,7 +863,7 @@ class App:
         lines = [
             f"Bestand: {media.path.name}",
             f"Volledig pad: {media.path}",
-            f"Type: {'Video' if media.is_video else 'Foto'}",
+            f"Type: {'Video' if media.is_video else 'Medium'}",
             f"Bestandsdatum: {media.modified:%d-%m-%Y %H:%M:%S}",
             f"Opnamedatum: {media.capture:%d-%m-%Y %H:%M:%S}" if media.capture else "Opnamedatum: niet beschikbaar",
             f"Grootte: {media.size:,} bytes"
@@ -1171,48 +1171,38 @@ class App:
                 self.show_tab("Kaart")
 
     @staticmethod
-    def normalized_media_stem(path):
-        """Verwijder herkenbare versie-aanduidingen uit een bestandsnaam."""
-        stem = path.stem.lower().strip()
-        patterns = (
-            r"(?:[_ -](?:bewerkt|bewerking|edited|edit|copy|kopie|kopie\d+|small|klein|thumb|thumbnail|resized|resize|scaled|compressed|compressie|export|web))+$",
-            r"(?:[ _-]\(\d+\))+$",
-            r"(?:[-_]\d+)$",
-        )
-        previous = None
-        while stem != previous:
-            previous = stem
-            for pattern in patterns:
-                stem = re.sub(pattern, "", stem, flags=re.IGNORECASE)
-        return stem
-
-    @staticmethod
-    def filename_match_keys(path):
-        """Alle reeksen van vijf opeenvolgende tekens uit de bestandsnaam (zonder extensie)."""
-        name = Path(path).stem.casefold()
-        return {
-            name[index:index + 5]
-            for index in range(len(name) - 4)
-            if name[index:index + 5].strip()
-        }
+    def filename_datetime_keys(path):
+        """Haal geldige jjjjmmdd_uummss- en jjjjmmdduummss-codes uit de bestandsnaam."""
+        name = Path(path).stem
+        keys = set()
+        pattern = re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})_?(\d{2})(\d{2})(\d{2})(?!\d)")
+        for match in pattern.finditer(name):
+            raw = "".join(match.groups())
+            try:
+                datetime.strptime(raw, "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+            keys.add(raw)
+        return keys
 
     def find_derived_media(self, selected):
-        """Vergelijk de naam van het gekozen bestand met de namen van alle geïnventariseerde media."""
-        selected_keys = self.filename_match_keys(selected.path)
+        """Zoek in alle geïnventariseerde media naar dezelfde datum-tijdcode in de bestandsnaam."""
+        selected_keys = self.filename_datetime_keys(selected.path)
         if not selected_keys:
             return []
         matches = []
-        # Gebruik bewust self.items (de volledige inventaris), niet self.filtered:
-        # album-, datum- en zoekfilters mogen andere mappen niet uitsluiten.
+        # Gebruik de volledige inventaris, niet de actieve album- of datumfilter.
         for candidate in self.items:
             if candidate.path == selected.path:
                 continue
-            common = selected_keys.intersection(self.filename_match_keys(candidate.path))
+            common = selected_keys.intersection(self.filename_datetime_keys(candidate.path))
             if common:
+                code = sorted(common)[0]
+                formatted = code[:8] + "_" + code[8:]
                 matches.append((
                     candidate,
-                    "Gedeelde reeks van vijf tekens: " + ", ".join(sorted(common)[:5]),
-                    False
+                    "Zelfde datum-tijdcode: " + formatted,
+                    True
                 ))
         matches.sort(key=lambda row: (row[0].path.name.casefold(), str(row[0].path.parent).casefold()))
         return matches
@@ -1220,7 +1210,7 @@ class App:
     def delete_selected_media(self):
         selected = self.selected
         if not selected:
-            messagebox.showinfo("Verwijderen", "Selecteer eerst één foto of video.")
+            messagebox.showinfo("Verwijderen", "Selecteer eerst één medium.")
             return
         if not selected.path.exists():
             messagebox.showwarning("Verwijderen", "Het geselecteerde bestand bestaat niet meer.")
@@ -1231,9 +1221,9 @@ class App:
         for child in self.delete_inner.winfo_children():
             child.destroy()
 
-        # Toon eerst direct de gekozen foto in het tabblad Verwijderen.
-        self.delete_heading.configure(text="Geselecteerde foto: " + selected.path.name)
-        self.delete_count.configure(text="Foto wordt getoond…")
+        # Toon eerst direct de gekozen medium in het tabblad Verwijderen.
+        self.delete_heading.configure(text="Geselecteerde medium: " + selected.path.name)
+        self.delete_count.configure(text="Medium wordt getoond…")
         self.delete_confirm_button.configure(state="disabled")
         self._add_delete_candidate_tile(
             selected, "Geselecteerde bestand — wordt verwijderd", mandatory=True
@@ -1241,7 +1231,7 @@ class App:
         self.show_tab("Verwijderen")
         self.update_idletasks()
 
-        # Zoek direct: de gekozen foto moet meteen zichtbaar zijn en mag niet
+        # Zoek direct: de gekozen medium moet meteen zichtbaar zijn en mag niet
         # afhankelijk zijn van een uitgestelde Tk-callback.
         try:
             self._load_derived_candidates(selected)
@@ -1250,7 +1240,7 @@ class App:
             self.delete_confirm_button.configure(state="disabled")
             messagebox.showerror(
                 "Verwijderen",
-                f"De geselecteerde foto is geplaatst, maar zoeken naar afgeleide media is mislukt:\\n{error}",
+                f"De geselecteerde medium is geplaatst, maar zoeken naar afgeleide media is mislukt:\\n{error}",
                 parent=self.root
             )
 
@@ -1437,7 +1427,7 @@ class App:
             })
             request = urllib.request.Request(
                 "https://nominatim.openstreetmap.org/reverse?" + params,
-                headers={"User-Agent": "FotoVerkennerWindows/1.0"}
+                headers={"User-Agent": "MediaVerkennerWindows/1.0"}
             )
             with urllib.request.urlopen(request, timeout=12) as response:
                 data = json.loads(response.read().decode("utf-8"))
