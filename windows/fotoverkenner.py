@@ -204,6 +204,9 @@ class App:
         self.vlc_process = None
         self.vlc_socket = None
         self.vlc_port = None
+        self.video_fullscreen = False
+        self.video_fullscreen_parent = None
+        self.video_fullscreen_style = None
         self.video_poll_job = None
         self.map_widget = None
         self.map_marker = None
@@ -1896,12 +1899,67 @@ class App:
             return False
 
     def toggle_video_fullscreen(self):
-        """Schakel VLC-video om naar volledig scherm; Escape brengt de video terug."""
-        if self.vlc_process is None:
+        """Maak het ingebedde videovenster schermvullend; Escape herstelt de indeling."""
+        if self.vlc_process is None or sys.platform != "win32":
             return
-        if not self._vlc_send("fullscreen"):
-            self.video_status.configure(text="Geen verbinding met VLC")
-    
+        if self.video_fullscreen:
+            self.exit_video_fullscreen()
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self.video_surface.winfo_id()
+            self.root.update_idletasks()
+            self.video_surface.update_idletasks()
+
+            # Bewaar de oorspronkelijke Windows-parent en stijl. VLC blijft
+            # renderen in exact hetzelfde HWND; alleen dat venster wordt tijdelijk
+            # een schermvullend popup-venster.
+            self.video_fullscreen_parent = user32.GetParent(hwnd)
+            self.video_fullscreen_style = user32.GetWindowLongW(hwnd, -16)
+            self.video_surface.pack_forget()
+            popup_style = (self.video_fullscreen_style & ~0x40000000) | 0x80000000
+            user32.SetParent(hwnd, 0)
+            user32.SetWindowLongW(hwnd, -16, popup_style)
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+            if not user32.SetWindowPos(hwnd, -1, 0, 0, width, height, 0x0040 | 0x0004):
+                raise ctypes.WinError()
+            self.video_fullscreen = True
+            self.video_fullscreen_button.configure(text="⛶ Venster herstellen")
+            self.video_status.configure(text="Volledig scherm — druk op Escape om terug te keren")
+            self.root.bind_all("<Escape>", self._fullscreen_escape, add="+")
+        except Exception as error:
+            self.exit_video_fullscreen()
+            self.video_status.configure(text=f"Volledig scherm niet beschikbaar: {error}")
+
+    def _fullscreen_escape(self, _event=None):
+        if self.video_fullscreen:
+            self.exit_video_fullscreen()
+            return "break"
+
+    def exit_video_fullscreen(self):
+        """Herstel het videovenster naar de oorspronkelijke Tkinter-indeling."""
+        if not getattr(self, "video_fullscreen", False):
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self.video_surface.winfo_id()
+            parent = self.video_fullscreen_parent
+            style = self.video_fullscreen_style
+            user32.SetParent(hwnd, parent)
+            if style is not None:
+                user32.SetWindowLongW(hwnd, -16, style)
+            user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0020 | 0x0040)
+        finally:
+            self.video_fullscreen = False
+            self.video_fullscreen_parent = None
+            self.video_fullscreen_style = None
+            if hasattr(self, "video_fullscreen_button"):
+                self.video_fullscreen_button.configure(text="⛶ Volledig scherm")
+            if hasattr(self, "video_surface") and self.vlc_process is not None:
+                self.video_surface.pack(fill="both", expand=True, padx=6, pady=6, before=self.video_actions)
+                self.video_surface.update_idletasks()
+
     def toggle_video_playback(self):
         """Speel video via een apart VLC-proces af in het HWND van het rechtervenster."""
         media = self.selected
@@ -2002,6 +2060,8 @@ class App:
         self._schedule_vlc_poll()
 
     def stop_video_playback(self, reset_preview=True):
+        if getattr(self, "video_fullscreen", False):
+            self.exit_video_fullscreen()
         if self.video_poll_job is not None:
             try:
                 self.root.after_cancel(self.video_poll_job)
