@@ -1403,9 +1403,9 @@ class App:
         self.table.focus(row)
         self.table.see(row)
         self.select()
-        self.select()
         # Navigatie met pijltjestoetsen of knoppen toont altijd het gekozen medium.
         self.show_tab("Medium")
+
     def show_tab(self, name):
         if name not in self.tab_frames:
             return
