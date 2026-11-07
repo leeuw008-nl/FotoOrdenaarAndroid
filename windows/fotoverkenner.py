@@ -6,6 +6,7 @@ import re
 import queue
 import threading
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 import subprocess
@@ -208,6 +209,10 @@ class App:
         self.video_fullscreen_parent = None
         self.video_fullscreen_style = None
         self.video_poll_job = None
+        self.video_duration = 0
+        self.video_current_time = 0
+        self.video_seek_dragging = False
+        self.video_volume = 80
         self.map_widget = None
         self.map_marker = None
         self.map_markers = []
@@ -509,6 +514,37 @@ class App:
         self.video_status.pack(side="left", padx=10)
         video_actions.pack_forget()
         self.video_actions = video_actions
+
+        # Afspeelbediening: tijdlijn, tijdsaanduiding, sprongen en volume.
+        video_controls = ttk.Frame(image_tab, padding=(8, 0, 8, 5))
+        self.video_time_label = ttk.Label(video_controls, text="00:00 / 00:00", width=13, anchor="w")
+        self.video_time_label.pack(side="left", padx=(0, 6))
+        self.video_progress_scale = ttk.Scale(
+            video_controls, from_=0, to=1, orient="horizontal",
+            command=self._on_video_scale, state="disabled"
+        )
+        self.video_progress_scale.pack(side="left", fill="x", expand=True, padx=4)
+        self.video_progress_scale.bind("<ButtonRelease-1>", self._seek_video_from_scale)
+        self.video_back_button = ttk.Button(
+            video_controls, text="↶ 10s", width=6,
+            command=lambda: self.seek_video_relative(-10), state="disabled"
+        )
+        self.video_back_button.pack(side="left", padx=(6, 2))
+        self.video_forward_button = ttk.Button(
+            video_controls, text="10s ↷", width=6,
+            command=lambda: self.seek_video_relative(10), state="disabled"
+        )
+        self.video_forward_button.pack(side="left", padx=(2, 8))
+        ttk.Label(video_controls, text="Volume").pack(side="left", padx=(4, 3))
+        self.video_volume_scale = ttk.Scale(
+            video_controls, from_=0, to=100, orient="horizontal",
+            length=105, command=self._on_video_volume
+        )
+        self.video_volume_scale.set(self.video_volume)
+        self.video_volume_scale.pack(side="left")
+        video_controls.pack_forget()
+        self.video_controls = video_controls
+
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
         self.previous_media_button = ttk.Button(image_actions, text="◀ Vorige", command=lambda: self.navigate_media(-1), state="disabled")
@@ -1084,13 +1120,20 @@ class App:
         self.selected = media
         if media.is_video:
             self.open_button.pack_forget()
-            self.video_actions.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1])
+            self.video_actions.pack(fill="x", padx=6, pady=(0, 2), before=self.preview.master.winfo_children()[-1])
+            self.video_controls.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1])
             self.video_play_button.configure(text="Openen / afspelen", state="normal")
+            self.video_progress_scale.configure(state="disabled", to=1)
+            self.video_progress_scale.set(0)
+            self.video_time_label.configure(text="00:00 / 00:00")
+            self.video_back_button.configure(state="disabled")
+            self.video_forward_button.configure(state="disabled")
             self.video_stop_button.configure(state="disabled")
             self.video_fullscreen_button.configure(state="disabled")
             self.video_status.configure(text="Video klaar om af te spelen")
         else:
             self.video_actions.pack_forget()
+            self.video_controls.pack_forget()
             self.open_button.pack(side="left")
         self.filename_entry.configure(state="normal")
         self.filename_entry.delete(0, "end")
@@ -1898,6 +1941,97 @@ class App:
             self.vlc_socket = None
             return False
 
+    @staticmethod
+    def _format_video_time(seconds):
+        seconds = max(0, int(seconds or 0))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+    def _on_video_scale(self, _value=None):
+        # Tijdens slepen de periodieke VLC-update niet over de gebruikerspositie laten schrijven.
+        self.video_seek_dragging = True
+
+    def _seek_video_from_scale(self, _event=None):
+        if self.vlc_process is None:
+            self.video_seek_dragging = False
+            return "break"
+        try:
+            target = max(0, min(self.video_duration or 0, int(float(self.video_progress_scale.get()))))
+            if self._vlc_send(f"seek {target}"):
+                self.video_current_time = target
+                self.video_time_label.configure(
+                    text=f"{self._format_video_time(target)} / {self._format_video_time(self.video_duration)}"
+                )
+        finally:
+            self.video_seek_dragging = False
+        return "break"
+
+    def seek_video_relative(self, offset):
+        if self.vlc_process is None:
+            return
+        target = max(0, self.video_current_time + int(offset))
+        if self.video_duration:
+            target = min(target, self.video_duration)
+        if self._vlc_send(f"seek {target}"):
+            self.video_current_time = target
+            if not self.video_seek_dragging:
+                self.video_progress_scale.set(target)
+            self.video_time_label.configure(
+                text=f"{self._format_video_time(target)} / {self._format_video_time(self.video_duration)}"
+            )
+
+    def _on_video_volume(self, value):
+        if self.vlc_process is None:
+            return
+        try:
+            percent = max(0, min(100, int(float(value))))
+            # VLC RC gebruikt een volumebereik van 0-256.
+            self._vlc_send(f"volume {round(percent * 2.56)}")
+        except (ValueError, OSError):
+            pass
+
+    def _read_vlc_progress(self):
+        """Lees get_time/get_length via VLC RC zonder de Tk-interface lang te blokkeren."""
+        if self.vlc_socket is None:
+            return
+        sock = self.vlc_socket
+        try:
+            old_timeout = sock.gettimeout()
+            sock.settimeout(0.025)
+            sock.sendall(b"get_time\\nget_length\\n")
+            chunks = []
+            deadline = time.monotonic() + 0.09
+            while time.monotonic() < deadline:
+                try:
+                    data = sock.recv(4096)
+                    if not data:
+                        break
+                    chunks.append(data.decode("utf-8", "ignore"))
+                except socket.timeout:
+                    break
+            sock.settimeout(old_timeout)
+            values = re.findall(r"(?m)^\\s*(\\d+)\\s*$", "".join(chunks))
+            if len(values) >= 2:
+                current, duration = int(values[-2]), int(values[-1])
+                if duration > 0:
+                    self.video_current_time = current
+                    self.video_duration = duration
+                    self.video_progress_scale.configure(to=max(1, duration))
+                    if not self.video_seek_dragging:
+                        self.video_progress_scale.set(min(current, duration))
+                    self.video_time_label.configure(
+                        text=f"{self._format_video_time(current)} / {self._format_video_time(duration)}"
+                    )
+                    self.video_progress_scale.configure(state="normal")
+                    self.video_back_button.configure(state="normal")
+                    self.video_forward_button.configure(state="normal")
+        except (OSError, tk.TclError):
+            try:
+                sock.settimeout(0.25)
+            except OSError:
+                pass
+
     def toggle_video_fullscreen(self):
         """Fullscreen is tijdelijk uitgeschakeld; HWND-loskoppeling bleek instabiel."""
         self.video_status.configure(
@@ -1960,6 +2094,14 @@ class App:
                     startupinfo=startupinfo,
                 )
                 self.video_playing = True
+                self.video_current_time = 0
+                self.video_duration = 0
+                self.video_seek_dragging = False
+                self.video_progress_scale.configure(state="disabled", to=1)
+                self.video_progress_scale.set(0)
+                self.video_time_label.configure(text="00:00 / 00:00")
+                self.video_back_button.configure(state="disabled")
+                self.video_forward_button.configure(state="disabled")
                 self.video_play_button.configure(text="Pauzeren")
                 self.video_stop_button.configure(state="normal")
                 self.video_fullscreen_button.configure(state="disabled")
@@ -2011,6 +2153,8 @@ class App:
         # De RC-poort kan iets later beschikbaar komen dan het proces.
         if self.vlc_socket is None:
             self._vlc_send(" ")
+        if self.vlc_socket is not None:
+            self._read_vlc_progress()
         self._schedule_vlc_poll()
 
     def stop_video_playback(self, reset_preview=True):
@@ -2055,10 +2199,18 @@ class App:
                 name="MediaVerkenner-VLC-stop", daemon=True
             ).start()
         self.video_playing = False
+        self.video_current_time = 0
+        self.video_duration = 0
+        self.video_seek_dragging = False
         if hasattr(self, "video_play_button"):
             self.video_play_button.configure(text="Openen / afspelen")
             self.video_stop_button.configure(state="disabled")
             self.video_fullscreen_button.configure(state="disabled")
+            self.video_progress_scale.configure(state="disabled", to=1)
+            self.video_progress_scale.set(0)
+            self.video_time_label.configure(text="00:00 / 00:00")
+            self.video_back_button.configure(state="disabled")
+            self.video_forward_button.configure(state="disabled")
         if hasattr(self, "video_surface"):
             self.video_surface.pack_forget()
         if hasattr(self, "preview") and not self.preview.winfo_manager():
