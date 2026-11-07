@@ -210,6 +210,7 @@ class App:
         self.preview_resize_job = None
         self.preview_requested_size = None
         self.preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MediaPreview")
+        self.preview_future = None
         # Beperk parallelle thumbnail-decodering: geen duizenden threads meer
         # bij grote mappen. Dit voorkomt piekbelasting en geheugenuitputting.
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MediaThumb")
@@ -1249,7 +1250,9 @@ class App:
         self.preview_requested_size = (width, height)
         self.preview_photo = None
         self.preview.configure(image="", text="Voorbeeld laden…")
-        self.preview_executor.submit(
+        if self.preview_future is not None and not self.preview_future.done():
+            self.preview_future.cancel()
+        self.preview_future = self.preview_executor.submit(
             self._load_preview_worker, generation, media.path, media.is_video, width, height
         )
 
@@ -1276,7 +1279,7 @@ class App:
                     continue
                 if image is None:
                     message = (
-                        "Videovoorbeeld niet beschikbaar\\nDubbelklik of kies Openen / afspelen"
+                        "Videovoorbeeld niet beschikbaar\nDubbelklik of kies Openen / afspelen"
                         if is_video else "Voorbeeld niet beschikbaar"
                     )
                     if error:
