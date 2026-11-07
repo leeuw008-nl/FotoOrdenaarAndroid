@@ -59,6 +59,12 @@ def dms(value, ref):
     number = num(value[0]) + num(value[1]) / 60 + num(value[2]) / 3600
     return -number if gps_ref(ref) in ("S", "W") else number
 
+def resource_path(name):
+    """Vind meegebundelde bestanden, zowel in Python als in de PyInstaller-app."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / name
+
+
 
 @dataclass
 class Media:
@@ -1480,6 +1486,10 @@ def main():
     root = tk.Tk()
     try:
         root.tk.call("tk", "scaling", 1.15)
+    except Exception:
+        pass
+    try:
+        root.iconbitmap(str(resource_path("mediaverkenner.ico")))
     except Exception:
         pass
     App(root)
