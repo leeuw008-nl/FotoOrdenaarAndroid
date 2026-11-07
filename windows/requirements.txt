@@ -2,4 +2,3 @@ Pillow>=10.4,<13
 pyinstaller>=6.10,<7
 tkintermapview>=1.29,<2
 opencv-python-headless>=4.10,<5
-python-vlc>=3.0.21203,<4
