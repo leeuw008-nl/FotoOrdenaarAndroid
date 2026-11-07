@@ -215,6 +215,9 @@ class App:
         self.expand_queue = []
         self.render_generation = 0
         self.build_ui()
+        # Pijltjestoetsen bedienen Vorige/Volgende wanneer het mediavoorbeeld actief is.
+        self.root.bind_all("<Left>", self._keyboard_previous_media, add="+")
+        self.root.bind_all("<Right>", self._keyboard_next_media, add="+")
 
     def _configure_styles(self):
         """Consistente, rustige blauwe Windows-opmaak in de Android-huiskleur."""
@@ -676,7 +679,13 @@ class App:
             elif kind == "metadata_progress":
                 self.status.set(f"Metadata lezen… {payload} bestanden verwerkt")
             elif kind == "metadata_done":
+                selected_path = self.selected.path if self.selected else None
                 self.filter()
+                # Metadata wordt in een achtergrondworker ingelezen. De eerste
+                # inventaris bevatte alleen bestandsdatums; ververs daarom ook
+                # de huidige selectie zodra EXIF/GPS volledig beschikbaar is.
+                if selected_path:
+                    self.root.after(150, lambda path=selected_path: self.restore_selection_after_metadata(path))
                 self.status.set(f"Gereed: {len(self.items)} bestanden; metadata verwerkt voor {payload} bestanden.")
                 if self.album_map_path:
                     self.show_album_on_map(self.album_map_path, switch_tab=False)
@@ -684,6 +693,23 @@ class App:
                 finished = True
         if not finished:
             self.root.after(100, lambda: self.poll_scan(generation))
+
+    def restore_selection_after_metadata(self, path):
+        try:
+            index = next(i for i, item in enumerate(self.filtered) if item.path == path)
+        except StopIteration:
+            return
+        row = str(index)
+        if not self.table.exists(row):
+            item = self.filtered[index]
+            date_text = item.date.strftime("%d-%m-%Y %H:%M:%S")
+            size = f"{item.size / (1024 * 1024):.1f} MB" if item.size >= 1048576 else f"{item.size / 1024:.0f} KB"
+            gps = f"{item.lat:.5f}, {item.lon:.5f}" if item.lat is not None and item.lon is not None else item.place
+            icon = "📄" if item.is_video else "🖼"
+            self.table.insert("", "end", iid=row, values=(f"{icon} {item.path.name}", "Video" if item.is_video else "Medium", date_text, size, gps))
+        self.table.selection_set(row)
+        self.table.focus(row)
+        self.select()
 
     def build_album_tree(self):
         self.album_tree.delete(*self.album_tree.get_children())
@@ -1306,6 +1332,25 @@ class App:
             index = -1
         self.previous_media_button.configure(state="normal" if index > 0 else "disabled")
         self.next_media_button.configure(state="normal" if 0 <= index < len(self.filtered) - 1 else "disabled")
+
+    def _keyboard_previous_media(self, event=None):
+        return self._keyboard_navigate_media(-1, event)
+
+    def _keyboard_next_media(self, event=None):
+        return self._keyboard_navigate_media(1, event)
+
+    def _keyboard_navigate_media(self, step, event=None):
+        if self.active_tab != "Medium" or not self.selected:
+            return
+        try:
+            widget = self.root.focus_get()
+            # Laat pijltjes hun normale werking houden in invoervelden en tekstvakken.
+            if widget and widget.winfo_class() in ("Entry", "TEntry", "Text", "TCombobox", "Treeview"):
+                return
+        except tk.TclError:
+            pass
+        self.navigate_media(step)
+        return "break"
 
     def navigate_media(self, step):
         """Selecteer het vorige of volgende item in de actuele, gesorteerde medialijst."""
