@@ -1796,13 +1796,82 @@ class App:
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
 
+    @staticmethod
+    def _open_mov_with_mp4_player(path):
+        """Open een MOV via dezelfde Windows-app-koppeling als MP4."""
+        import ctypes
+        import winreg
+        from ctypes import wintypes
+
+        prog_id = None
+        user_choice = (
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts"
+            r"\.mp4\UserChoice"
+        )
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, user_choice) as key:
+                prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+        except OSError:
+            try:
+                prog_id = winreg.QueryValue(winreg.HKEY_CLASSES_ROOT, ".mp4")
+            except OSError:
+                prog_id = None
+        if not prog_id:
+            raise OSError(
+                "Windows heeft geen standaardspeler voor .mp4 ingesteld. "
+                "Stel eerst een standaardapp voor MP4-bestanden in."
+            )
+
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("fMask", wintypes.ULONG),
+                ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR),
+                ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p),
+                ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HANDLE),
+                ("dwHotKey", wintypes.DWORD),
+                ("hIcon", wintypes.HANDLE),
+            ]
+
+        # SEE_MASK_CLASSNAME laat Windows de .mp4-klasse gebruiken,
+        # ook al heeft het bestand dat wordt geopend de extensie .mov.
+        info = SHELLEXECUTEINFOW()
+        info.cbSize = ctypes.sizeof(info)
+        info.fMask = 0x00000001  # SEE_MASK_CLASSNAME
+        info.lpVerb = "open"
+        info.lpFile = str(path)
+        info.lpClass = str(prog_id)
+        info.nShow = 1
+
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+        shell32.ShellExecuteExW.restype = wintypes.BOOL
+        if not shell32.ShellExecuteExW(ctypes.byref(info)):
+            error_code = ctypes.get_last_error()
+            raise OSError(error_code, ctypes.FormatError(error_code), str(path))
+        if info.hInstApp and info.hInstApp <= 32:
+            raise OSError(
+                f"Windows kon de MP4-speler niet starten (ShellExecute-code "
+                f"{info.hInstApp})."
+            )
+
     def open_file(self, _event=None):
         media = self.selected
         if not media:
             return
         try:
             if sys.platform == "win32":
-                os.startfile(str(media.path))
+                if media.path.suffix.lower() == ".mov":
+                    self._open_mov_with_mp4_player(media.path)
+                else:
+                    os.startfile(str(media.path))
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", str(media.path)])
             else:
