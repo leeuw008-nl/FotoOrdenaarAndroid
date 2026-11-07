@@ -1839,8 +1839,8 @@ class App:
             import winreg
             for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
                 for key_name in (
-                    r"SOFTWARE\\VideoLAN\\VLC",
-                    r"SOFTWARE\\WOW6432Node\\VideoLAN\\VLC",
+                    r"SOFTWARE\VideoLAN\VLC",
+                    r"SOFTWARE\WOW6432Node\VideoLAN\VLC",
                 ):
                     try:
                         with winreg.OpenKey(hive, key_name) as key:
@@ -2009,7 +2009,8 @@ class App:
         if hasattr(self, "video_surface"):
             self.video_surface.pack_forget()
         if hasattr(self, "preview") and not self.preview.winfo_manager():
-            self.preview.pack(fill="both", expand=True, padx=6, pady=6, before=self.video_actions)
+            target = self.video_actions if self.video_actions.winfo_manager() else self.image_actions
+            self.preview.pack(fill="both", expand=True, padx=6, pady=6, before=target)
         if reset_preview and getattr(self, "selected", None) and self.selected.is_video:
             self.render_preview()
 
