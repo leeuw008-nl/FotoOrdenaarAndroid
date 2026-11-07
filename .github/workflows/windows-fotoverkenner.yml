@@ -1,12 +1,12 @@
-name: Build FotoVerkenner Windows
+name: Build MediaVerkenner Windows
 on:
   workflow_dispatch:
   push:
     branches:
-      - windows/fotoverkenner-desktop-v1
+      - windows/mediaverkenner-desktop-v1
     paths:
       - "windows/**"
-      - ".github/workflows/windows-fotoverkenner.yml"
+      - ".github/workflows/windows-mediaverkenner.yml"
 permissions:
   contents: read
 jobs:
@@ -22,11 +22,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r windows/requirements.txt
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name FotoVerkenner windows/fotoverkenner.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MediaVerkenner windows/mediaverkenner.py
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
-          name: FotoVerkenner-Windows-x64
-          path: dist/FotoVerkenner.exe
+          name: MediaVerkenner-Windows-x64
+          path: dist/MediaVerkenner.exe
           if-no-files-found: error
           retention-days: 14
