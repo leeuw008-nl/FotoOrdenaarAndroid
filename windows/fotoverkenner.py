@@ -497,6 +497,11 @@ class App:
         self.video_play_button.pack(side="left")
         self.video_stop_button = ttk.Button(video_actions, text="■ Stoppen", command=self.stop_video_playback, state="disabled")
         self.video_stop_button.pack(side="left", padx=(6, 0))
+        self.video_fullscreen_button = ttk.Button(
+            video_actions, text="⛶ Volledig scherm",
+            command=self.toggle_video_fullscreen, state="disabled"
+        )
+        self.video_fullscreen_button.pack(side="left", padx=(6, 0))
         self.video_status = ttk.Label(video_actions, text="")
         self.video_status.pack(side="left", padx=10)
         video_actions.pack_forget()
@@ -1886,6 +1891,13 @@ class App:
             self.vlc_socket = None
             return False
 
+    def toggle_video_fullscreen(self):
+        """Schakel VLC-video om naar volledig scherm; Escape brengt de video terug."""
+        if self.vlc_process is None:
+            return
+        if not self._vlc_send("fullscreen"):
+            self.video_status.configure(text="Geen verbinding met VLC")
+    
     def toggle_video_playback(self):
         """Speel video via een apart VLC-proces af in het HWND van het rechtervenster."""
         media = self.selected
@@ -1934,6 +1946,7 @@ class App:
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_stop_button.configure(state="normal")
+                self.video_fullscreen_button.configure(state="normal")
                 self.video_status.configure(text="Afspelen via VLC in MediaVerkenner…")
                 self._schedule_vlc_poll()
                 return
@@ -2014,6 +2027,7 @@ class App:
         if hasattr(self, "video_play_button"):
             self.video_play_button.configure(text="▶ Afspelen")
             self.video_stop_button.configure(state="disabled")
+            self.video_fullscreen_button.configure(state="disabled")
         if hasattr(self, "video_surface"):
             self.video_surface.pack_forget()
         if hasattr(self, "preview") and not self.preview.winfo_manager():
