@@ -209,12 +209,14 @@ class App:
         """Kopieer de met de muis of toetsen geselecteerde bestandsnaam."""
         widget = event.widget if event is not None else self.filename_entry
         try:
-            value = widget.get("sel.first", "sel.last")
+            if isinstance(widget, tk.Entry):
+                start = widget.index("sel.first")
+                end = widget.index("sel.last")
+                value = widget.get()[start:end]
+            else:
+                value = widget.get("sel.first", "sel.last")
         except (tk.TclError, TypeError):
-            try:
-                value = widget.get("1.0", "end-1c")
-            except tk.TclError:
-                value = ""
+            value = ""
         if value:
             self.root.clipboard_clear()
             self.root.clipboard_append(value)
@@ -1279,8 +1281,8 @@ class App:
             self._add_delete_candidate_tile(candidate, reason, variable=variable)
             self.delete_candidate_choices.append((candidate, variable))
         if not matches:
-            ttk.Label(self.delete_inner, text="Geen andere media met dezelfde datum-tijdcode gevonden.").grid(
-                row=0, column=0, sticky="w", padx=12, pady=12
+            self.delete_count.configure(
+                text=f"1 bestand geselecteerd; geen andere media met dezelfde datum-tijdcode gevonden"
             )
         self.delete_canvas.update_idletasks()
         self.delete_canvas.configure(scrollregion=self.delete_canvas.bbox("all"))
