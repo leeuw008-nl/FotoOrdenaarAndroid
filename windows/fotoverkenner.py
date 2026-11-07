@@ -8,6 +8,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 import subprocess
+import ctypes
+from ctypes import wintypes
 import sys
 import urllib.parse
 import urllib.request
@@ -33,10 +35,7 @@ try:
 except Exception:
     tkintermapview = None
 
-try:
-    from ffpyplayer.player import MediaPlayer
-except Exception:
-    MediaPlayer = None
+# Windows Media Player ActiveX wordt pas bij het starten van video geladen.
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".3gp", ".mts", ".m2ts"}
@@ -196,11 +195,11 @@ class App:
         self.day = tk.StringVar()
         self.status = tk.StringVar(value="Kies een mediamap om media te bekijken.")
         self.preview_photo = None
-        self.video_player = None
-        self.video_play_job = None
         self.video_playing = False
-        self.video_photo = None
-        self.video_path = None
+        self.wmp_control = None
+        self.wmp_hwnd = None
+        self.wmp_atl = None
+        self.wmp_com_initialized = False
         self.map_widget = None
         self.map_marker = None
         self.map_markers = []
@@ -1158,6 +1157,22 @@ class App:
         """Herlaad pas na een echte formaatwijziging; voorkom configure-lussen."""
         if not self.selected or event is None:
             return
+        if self.wmp_hwnd:
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.SetWindowPos.argtypes = [
+                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_int, ctypes.c_int, wintypes.UINT
+                ]
+                user32.SetWindowPos.restype = wintypes.BOOL
+                user32.SetWindowPos(
+                    wintypes.HWND(self.wmp_hwnd), None, 0, 0,
+                    max(1, self.preview.winfo_width()),
+                    max(1, self.preview.winfo_height()), 0x0004 | 0x0010
+                )
+            except Exception:
+                pass
+            return
         requested = self.preview_requested_size
         if requested and abs(event.width - requested[0]) < 36 and abs(event.height - requested[1]) < 36:
             return
@@ -1824,91 +1839,124 @@ class App:
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
 
+    def _create_windows_media_player(self, path):
+        """Host de Windows Media Player ActiveX-control in het rechter Medium-venster."""
+        if sys.platform != "win32":
+            raise RuntimeError("De ingebouwde Windows Media Player is alleen beschikbaar op Windows.")
+        import comtypes
+        from comtypes.client import GetBestInterface
+
+        if not self.wmp_com_initialized:
+            comtypes.CoInitialize()
+            self.wmp_com_initialized = True
+
+        atl = ctypes.WinDLL("atl.dll")
+        atl.AtlAxWinInit.restype = wintypes.BOOL
+        if not atl.AtlAxWinInit():
+            raise OSError("Windows kon de ActiveX-host voor Media Player niet initialiseren.")
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.CreateWindowExW.restype = wintypes.HWND
+        user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID
+        ]
+        user32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        user32.GetModuleHandleW.restype = wintypes.HMODULE
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
+        user32.DestroyWindow.restype = wintypes.BOOL
+
+        self.root.update_idletasks()
+        parent = wintypes.HWND(self.preview.winfo_id())
+        width = max(1, self.preview.winfo_width())
+        height = max(1, self.preview.winfo_height())
+        player_clsid = "{6BF52A52-394A-11d3-B153-00C04F79FAA6}"
+        style = 0x40000000 | 0x10000000 | 0x02000000 | 0x04000000
+        hwnd = user32.CreateWindowExW(
+            0, "AtlAxWin", player_clsid, style,
+            0, 0, width, height, parent, None,
+            user32.GetModuleHandleW(None), None
+        )
+        if not hwnd:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        try:
+            unknown = ctypes.POINTER(comtypes.IUnknown)()
+            atl.AtlAxGetControl.argtypes = [
+                wintypes.HWND, ctypes.POINTER(ctypes.POINTER(comtypes.IUnknown))
+            ]
+            atl.AtlAxGetControl.restype = ctypes.c_long
+            result = atl.AtlAxGetControl(hwnd, ctypes.byref(unknown))
+            if result != 0 or not unknown:
+                raise OSError(f"Windows Media Player-control kon niet worden geladen (HRESULT 0x{result & 0xffffffff:08X}).")
+
+            control = GetBestInterface(unknown)
+            control.uiMode = "none"
+            control.stretchToFit = True
+            control.settings.autoStart = True
+            control.settings.volume = 75
+            control.URL = str(path)
+            control.controls.play()
+
+            self.wmp_atl = atl
+            self.wmp_hwnd = hwnd
+            self.wmp_control = control
+        except Exception:
+            user32.DestroyWindow(hwnd)
+            raise
+
     def toggle_video_playback(self):
-        """Start of pauzeer video direct in het rechter Medium-venster."""
+        """Start of pauzeer video via de Windows Media Player in het rechter Medium-venster."""
         media = self.selected
         if not media or not media.is_video:
             return
-        if MediaPlayer is None:
-            messagebox.showerror(
-                "Videospeler niet beschikbaar",
-                "De ingebouwde videospeler ontbreekt in deze installatie. Installeer MediaVerkenner opnieuw."
-            )
-            return
-        if self.video_player is None or self.video_path != media.path:
-            self.stop_video_playback(reset_preview=False)
-            try:
-                self.video_player = MediaPlayer(str(media.path), ff_opts={"paused": False, "sync": "audio"})
-                self.video_path = media.path
+        try:
+            if self.wmp_control is None:
+                self._create_windows_media_player(media.path)
                 self.video_playing = True
                 self.video_play_button.configure(text="Ⅱ Pauzeren")
                 self.video_stop_button.configure(state="normal")
-                self.video_status.configure(text="Afspelen…")
-                self._schedule_video_frame(1)
-            except Exception as error:
-                self.stop_video_playback(reset_preview=False)
-                messagebox.showerror("Video afspelen mislukt", str(error), parent=self.root)
-            return
-        self.video_playing = not self.video_playing
-        try:
-            self.video_player.set_pause(not self.video_playing)
-        except Exception as error:
-            messagebox.showerror("Videospeler", str(error), parent=self.root)
-            self.stop_video_playback(reset_preview=False)
-            return
-        self.video_play_button.configure(text="Ⅱ Pauzeren" if self.video_playing else "▶ Verder")
-        if self.video_playing:
-            self._schedule_video_frame(1)
-        else:
-            self.video_status.configure(text="Gepauzeerd")
-
-    def _schedule_video_frame(self, delay_ms=15):
-        if self.video_play_job is not None:
-            try:
-                self.root.after_cancel(self.video_play_job)
-            except tk.TclError:
-                pass
-        if self.video_player is not None and self.video_playing:
-            self.video_play_job = self.root.after(max(1, delay_ms), self._show_next_video_frame)
-
-    def _show_next_video_frame(self):
-        self.video_play_job = None
-        if self.video_player is None or not self.video_playing:
-            return
-        try:
-            frame, delay = self.video_player.get_frame()
-            if frame is not None:
-                image = frame[0].to_image()
-                width = max(240, self.preview.winfo_width() - 20)
-                height = max(200, self.preview.winfo_height() - 24)
-                image.thumbnail((width, height), Image.Resampling.LANCZOS)
-                self.video_photo = ImageTk.PhotoImage(image)
-                self.preview.configure(image=self.video_photo, text="")
-            if delay == "eof":
-                self.stop_video_playback(reset_preview=True)
-                self.video_status.configure(text="Video afgelopen")
+                self.video_status.configure(text="Afspelen via Windows Media Player…")
                 return
-            wait = int(max(0.001, delay if isinstance(delay, (int, float)) else 0.015) * 1000)
-            self._schedule_video_frame(wait)
+
+            if self.video_playing:
+                self.wmp_control.controls.pause()
+                self.video_playing = False
+                self.video_play_button.configure(text="▶ Verder")
+                self.video_status.configure(text="Gepauzeerd")
+            else:
+                self.wmp_control.controls.play()
+                self.video_playing = True
+                self.video_play_button.configure(text="Ⅱ Pauzeren")
+                self.video_status.configure(text="Afspelen via Windows Media Player…")
         except Exception as error:
             self.stop_video_playback(reset_preview=True)
-            self.video_status.configure(text="Afspelen gestopt")
-            self.status.set(f"Video kon niet verder worden afgespeeld: {error}")
+            self.video_status.configure(text="Windows Media Player kon niet starten")
+            messagebox.showerror(
+                "Video afspelen mislukt",
+                f"De Windows Media Player kon niet in MediaVerkenner worden gestart.\n\n{error}",
+                parent=self.root
+            )
 
     def stop_video_playback(self, reset_preview=True):
-        if self.video_play_job is not None:
-            try:
-                self.root.after_cancel(self.video_play_job)
-            except (tk.TclError, AttributeError):
-                pass
-            self.video_play_job = None
-        player = self.video_player
-        self.video_player = None
+        control = self.wmp_control
+        hwnd = self.wmp_hwnd
+        self.wmp_control = None
+        self.wmp_hwnd = None
+        self.wmp_atl = None
         self.video_playing = False
-        self.video_path = None
-        if player is not None:
+        if control is not None:
             try:
-                player.close_player()
+                control.controls.stop()
+            except Exception:
+                pass
+        if hwnd:
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.DestroyWindow.argtypes = [wintypes.HWND]
+                user32.DestroyWindow.restype = wintypes.BOOL
+                user32.DestroyWindow(wintypes.HWND(hwnd))
             except Exception:
                 pass
         if hasattr(self, "video_play_button"):
