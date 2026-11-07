@@ -33,6 +33,11 @@ try:
 except Exception:
     tkintermapview = None
 
+try:
+    from ffpyplayer.player import MediaPlayer
+except Exception:
+    MediaPlayer = None
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".3gp", ".mts", ".m2ts"}
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
@@ -191,6 +196,11 @@ class App:
         self.day = tk.StringVar()
         self.status = tk.StringVar(value="Kies een mediamap om media te bekijken.")
         self.preview_photo = None
+        self.video_player = None
+        self.video_play_job = None
+        self.video_playing = False
+        self.video_photo = None
+        self.video_path = None
         self.map_widget = None
         self.map_marker = None
         self.map_markers = []
@@ -475,6 +485,16 @@ class App:
         self.preview = ttk.Label(image_tab, text="Selecteer een medium", anchor="center", takefocus=True)
         self.preview.pack(fill="both", expand=True, padx=6, pady=6)
         self.preview.bind("<Configure>", self.resize_preview)
+        video_actions = ttk.Frame(image_tab)
+        video_actions.pack(fill="x", padx=6, pady=(0, 4))
+        self.video_play_button = ttk.Button(video_actions, text="▶ Afspelen", command=self.toggle_video_playback)
+        self.video_play_button.pack(side="left")
+        self.video_stop_button = ttk.Button(video_actions, text="■ Stoppen", command=self.stop_video_playback, state="disabled")
+        self.video_stop_button.pack(side="left", padx=(6, 0))
+        self.video_status = ttk.Label(video_actions, text="")
+        self.video_status.pack(side="left", padx=10)
+        video_actions.pack_forget()
+        self.video_actions = video_actions
         image_actions = ttk.Frame(image_tab)
         image_actions.pack(fill="x", padx=6, pady=(0, 6))
         self.previous_media_button = ttk.Button(image_actions, text="◀ Vorige", command=lambda: self.navigate_media(-1), state="disabled")
@@ -595,6 +615,7 @@ class App:
         if hasattr(self, "previous_media_button"):
             self.previous_media_button.configure(state="disabled")
             self.next_media_button.configure(state="disabled")
+        self.stop_video_playback(reset_preview=False)
         self.preview_photo = None
         if hasattr(self, "preview"):
             self.preview.configure(image="", text="Selecteer een medium")
@@ -1046,6 +1067,13 @@ class App:
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
+        if media.is_video:
+            self.video_actions.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1] if False else None)
+            self.video_play_button.configure(text="▶ Afspelen", state="normal")
+            self.video_stop_button.configure(state="disabled")
+            self.video_status.configure(text="Video klaar om af te spelen")
+        else:
+            self.video_actions.pack_forget()
         self.filename_entry.configure(state="normal")
         self.filename_entry.delete(0, "end")
         self.filename_entry.insert(0, media.path.name)
@@ -1796,82 +1824,109 @@ class App:
         elif media:
             messagebox.showinfo("Kaart", "Voor dit bestand zijn geen GPS-coördinaten gevonden.")
 
-    @staticmethod
-    def _open_mov_with_mp4_player(path):
-        """Open een MOV via dezelfde Windows-app-koppeling als MP4."""
-        import ctypes
-        import winreg
-        from ctypes import wintypes
-
-        prog_id = None
-        user_choice = (
-            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts"
-            r"\.mp4\UserChoice"
-        )
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, user_choice) as key:
-                prog_id, _ = winreg.QueryValueEx(key, "ProgId")
-        except OSError:
+    def toggle_video_playback(self):
+        """Start of pauzeer video direct in het rechter Medium-venster."""
+        media = self.selected
+        if not media or not media.is_video:
+            return
+        if MediaPlayer is None:
+            messagebox.showerror(
+                "Videospeler niet beschikbaar",
+                "De ingebouwde videospeler ontbreekt in deze installatie. Installeer MediaVerkenner opnieuw."
+            )
+            return
+        if self.video_player is None or self.video_path != media.path:
+            self.stop_video_playback(reset_preview=False)
             try:
-                prog_id = winreg.QueryValue(winreg.HKEY_CLASSES_ROOT, ".mp4")
-            except OSError:
-                prog_id = None
-        if not prog_id:
-            raise OSError(
-                "Windows heeft geen standaardspeler voor .mp4 ingesteld. "
-                "Stel eerst een standaardapp voor MP4-bestanden in."
-            )
+                self.video_player = MediaPlayer(str(media.path), ff_opts={"paused": False, "sync": "audio"})
+                self.video_path = media.path
+                self.video_playing = True
+                self.video_play_button.configure(text="Ⅱ Pauzeren")
+                self.video_stop_button.configure(state="normal")
+                self.video_status.configure(text="Afspelen…")
+                self._schedule_video_frame(1)
+            except Exception as error:
+                self.stop_video_playback(reset_preview=False)
+                messagebox.showerror("Video afspelen mislukt", str(error), parent=self.root)
+            return
+        self.video_playing = not self.video_playing
+        try:
+            self.video_player.set_pause(not self.video_playing)
+        except Exception as error:
+            messagebox.showerror("Videospeler", str(error), parent=self.root)
+            self.stop_video_playback(reset_preview=False)
+            return
+        self.video_play_button.configure(text="Ⅱ Pauzeren" if self.video_playing else "▶ Verder")
+        if self.video_playing:
+            self._schedule_video_frame(1)
+        else:
+            self.video_status.configure(text="Gepauzeerd")
 
-        class SHELLEXECUTEINFOW(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD),
-                ("fMask", wintypes.ULONG),
-                ("hwnd", wintypes.HWND),
-                ("lpVerb", wintypes.LPCWSTR),
-                ("lpFile", wintypes.LPCWSTR),
-                ("lpParameters", wintypes.LPCWSTR),
-                ("lpDirectory", wintypes.LPCWSTR),
-                ("nShow", ctypes.c_int),
-                ("hInstApp", wintypes.HINSTANCE),
-                ("lpIDList", ctypes.c_void_p),
-                ("lpClass", wintypes.LPCWSTR),
-                ("hkeyClass", wintypes.HANDLE),
-                ("dwHotKey", wintypes.DWORD),
-                ("hIcon", wintypes.HANDLE),
-            ]
+    def _schedule_video_frame(self, delay_ms=15):
+        if self.video_play_job is not None:
+            try:
+                self.root.after_cancel(self.video_play_job)
+            except tk.TclError:
+                pass
+        if self.video_player is not None and self.video_playing:
+            self.video_play_job = self.root.after(max(1, delay_ms), self._show_next_video_frame)
 
-        # SEE_MASK_CLASSNAME laat Windows de .mp4-klasse gebruiken,
-        # ook al heeft het bestand dat wordt geopend de extensie .mov.
-        info = SHELLEXECUTEINFOW()
-        info.cbSize = ctypes.sizeof(info)
-        info.fMask = 0x00000001  # SEE_MASK_CLASSNAME
-        info.lpVerb = "open"
-        info.lpFile = str(path)
-        info.lpClass = str(prog_id)
-        info.nShow = 1
+    def _show_next_video_frame(self):
+        self.video_play_job = None
+        if self.video_player is None or not self.video_playing:
+            return
+        try:
+            frame, delay = self.video_player.get_frame()
+            if frame is not None:
+                image = frame[0].to_image()
+                width = max(240, self.preview.winfo_width() - 20)
+                height = max(200, self.preview.winfo_height() - 24)
+                image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                self.video_photo = ImageTk.PhotoImage(image)
+                self.preview.configure(image=self.video_photo, text="")
+            if delay == "eof":
+                self.stop_video_playback(reset_preview=True)
+                self.video_status.configure(text="Video afgelopen")
+                return
+            wait = int(max(0.001, delay if isinstance(delay, (int, float)) else 0.015) * 1000)
+            self._schedule_video_frame(wait)
+        except Exception as error:
+            self.stop_video_playback(reset_preview=True)
+            self.video_status.configure(text="Afspelen gestopt")
+            self.status.set(f"Video kon niet verder worden afgespeeld: {error}")
 
-        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
-        shell32.ShellExecuteExW.restype = wintypes.BOOL
-        if not shell32.ShellExecuteExW(ctypes.byref(info)):
-            error_code = ctypes.get_last_error()
-            raise OSError(error_code, ctypes.FormatError(error_code), str(path))
-        if info.hInstApp and info.hInstApp <= 32:
-            raise OSError(
-                f"Windows kon de MP4-speler niet starten (ShellExecute-code "
-                f"{info.hInstApp})."
-            )
+    def stop_video_playback(self, reset_preview=True):
+        if self.video_play_job is not None:
+            try:
+                self.root.after_cancel(self.video_play_job)
+            except (tk.TclError, AttributeError):
+                pass
+            self.video_play_job = None
+        player = self.video_player
+        self.video_player = None
+        self.video_playing = False
+        self.video_path = None
+        if player is not None:
+            try:
+                player.close_player()
+            except Exception:
+                pass
+        if hasattr(self, "video_play_button"):
+            self.video_play_button.configure(text="▶ Afspelen")
+            self.video_stop_button.configure(state="disabled")
+        if reset_preview and getattr(self, "selected", None) and self.selected.is_video:
+            self.render_preview()
 
     def open_file(self, _event=None):
         media = self.selected
         if not media:
             return
+        if media.is_video:
+            self.toggle_video_playback()
+            return
         try:
             if sys.platform == "win32":
-                if media.path.suffix.lower() == ".mov":
-                    self._open_mov_with_mp4_player(media.path)
-                else:
-                    os.startfile(str(media.path))
+                os.startfile(str(media.path))
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", str(media.path)])
             else:
