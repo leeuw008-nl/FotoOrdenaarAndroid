@@ -1068,7 +1068,7 @@ class App:
         self.album_map_path = None
         self.selected = media
         if media.is_video:
-            self.video_actions.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1] if False else None)
+            self.video_actions.pack(fill="x", padx=6, pady=(0, 4), before=self.preview.master.winfo_children()[-1])
             self.video_play_button.configure(text="▶ Afspelen", state="normal")
             self.video_stop_button.configure(state="disabled")
             self.video_status.configure(text="Video klaar om af te spelen")
