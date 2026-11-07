@@ -198,6 +198,7 @@ class App:
         self.album_map_enabled = tk.BooleanVar(value=True)
         self.active_tab = "Kaart"
         self.album_selected = False
+        self.delete_tab_active = False
         self.tab_buttons = {}
         self.tab_frames = {}
         self.highlighting_media_album = False
@@ -572,6 +573,8 @@ class App:
     def clear_detail_panels(self):
         """Wis oude inhoud voordat een nieuwe selectie wordt verwerkt."""
         self.selected = None
+        self.delete_tab_active = False
+        self.delete_selected_item = None
         if hasattr(self, "filename_entry"):
             self.filename_entry.configure(state="normal")
             self.filename_entry.delete(0, "end")
@@ -1403,7 +1406,9 @@ class App:
             bool(media.camera), media.width is not None, media.height is not None,
             media.is_video
         )))
-        has_delete_candidates = bool(getattr(self, "delete_selected_item", None))
+        # Dit tabblad verschijnt uitsluitend nadat de gebruiker onderaan
+        # expliciet op de knop Verwijderen heeft gedrukt.
+        has_delete_candidates = bool(getattr(self, "delete_tab_active", False))
         visible = {
             "Medium": media is not None,
             "Kaart": has_gps or self.album_selected,
@@ -1472,6 +1477,7 @@ class App:
             return
 
         self.delete_selected_item = selected
+        self.delete_tab_active = True
         self.delete_candidate_choices = []
         for child in self.delete_inner.winfo_children():
             child.destroy()
@@ -1651,7 +1657,7 @@ class App:
                 media.is_video
             )),
             "Gallery": bool(self.filtered),
-            "Verwijderen": bool(getattr(self, "delete_selected_item", None))
+            "Verwijderen": bool(getattr(self, "delete_tab_active", False))
         }
         self.update_tab_visibility()
         for name, button in self.tab_buttons.items():
