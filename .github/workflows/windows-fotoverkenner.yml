@@ -3,10 +3,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - windows/mediaverkenner-desktop-v1
+      - windows/fotoverkenner-desktop-v1
     paths:
       - "windows/**"
-      - ".github/workflows/windows-mediaverkenner.yml"
+      - ".github/workflows/windows-fotoverkenner.yml"
 permissions:
   contents: read
 jobs:
@@ -22,7 +22,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r windows/requirements.txt
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name MediaVerkenner windows/mediaverkenner.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MediaVerkenner windows/fotoverkenner.py
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
