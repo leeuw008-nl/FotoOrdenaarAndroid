@@ -22,6 +22,9 @@ from PIL import Image, ImageTk, ImageOps, ExifTags
 
 try:
     import cv2
+    # Voorkom dat OpenCV naast de thumbnail-workers zelf nog een groot
+    # aantal rekenthreads start op Windows.
+    cv2.setNumThreads(1)
 except Exception:
     cv2 = None
 
