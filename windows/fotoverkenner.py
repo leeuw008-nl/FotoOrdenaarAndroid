@@ -197,7 +197,7 @@ class App:
         self.album_map_path = None
         self.album_map_enabled = tk.BooleanVar(value=True)
         self.active_tab = "Kaart"
-        self.album_selected = False
+        self.album_context_active = False
         self.delete_tab_active = False
         self.tab_buttons = {}
         self.tab_frames = {}
@@ -811,7 +811,7 @@ class App:
         path = self.tree_paths.get(selection[0])
         if path and path.is_dir():
             self.clear_detail_panels()
-            self.album_selected = True
+            self.album_context_active = True
             self.set_media_tabs_visible(False)
             self.album_map_path = path
             self.active_folder = path
@@ -1391,7 +1391,7 @@ class App:
 
     def set_media_tabs_visible(self, visible):
         """Toon alleen tabbladen die bij de huidige selectiecontext horen."""
-        self.album_selected = not visible
+        self.album_context_active = not visible
         self.update_tab_visibility()
         if not visible and self.active_tab in ("Medium", "Metadata"):
             self.show_tab("Gallery")
@@ -1411,9 +1411,9 @@ class App:
         has_delete_candidates = bool(getattr(self, "delete_tab_active", False))
         visible = {
             "Medium": media is not None,
-            "Kaart": has_gps or self.album_selected,
+            "Kaart": has_gps or self.album_context_active,
             "Metadata": bool(media and has_metadata),
-            "Gallery": self.album_selected,
+            "Gallery": self.album_context_active,
             "Verwijderen": has_delete_candidates
         }
         for name, button in self.tab_buttons.items():
@@ -1426,7 +1426,7 @@ class App:
             else:
                 button.pack_forget()
         if self.active_tab not in [name for name, shown in visible.items() if shown]:
-            fallback = "Gallery" if self.album_selected else ("Medium" if media else "Kaart")
+            fallback = "Gallery" if self.album_context_active else ("Medium" if media else "Kaart")
             if fallback in self.tab_frames and visible.get(fallback):
                 self.show_tab(fallback)
 
