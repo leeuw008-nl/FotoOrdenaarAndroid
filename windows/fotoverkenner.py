@@ -223,6 +223,14 @@ class App:
             self.status.set("Bestandsnaam gekopieerd.")
         return "break"
 
+    def copy_filename_entry(self, _event=None):
+        value = self.filename_entry.get()
+        if value:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.status.set("Bestandsnaam gekopieerd.")
+        return "break"
+
     @staticmethod
     def _protect_filename_entry(event):
         """Laat selecteren/kopieren toe, maar voorkom dat de bestandsnaam wordt gewijzigd."""
@@ -312,12 +320,11 @@ class App:
             font=("Segoe UI", 9), exportselection=False
         )
         self.filename_entry.pack(side="left", fill="x", expand=True)
-        self.filename_entry.configure(state="readonly", cursor="xterm")
-        self.filename_entry.bind(
-            "<Control-a>",
-            lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1]
-        )
-        self.filename_entry.bind("<Control-c>", self.copy_text_selection)
+        self.filename_entry.configure(state="normal", cursor="xterm")
+        self.filename_entry.bind("<KeyPress>", self._protect_filename_entry)
+        self.filename_entry.bind("<Control-a>", lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1])
+        self.filename_entry.bind("<Control-c>", self.copy_filename_entry)
+        ttk.Button(filename_bar, text="Kopieer", command=self.copy_filename_entry).pack(side="left", padx=(5, 0))
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -1242,10 +1249,8 @@ class App:
             selected, "Geselecteerde bestand — wordt verwijderd", mandatory=True
         )
         self.show_tab("Verwijderen")
-        self.update_idletasks()
 
-        # Zoek direct: de gekozen medium moet meteen zichtbaar zijn en mag niet
-        # afhankelijk zijn van een uitgestelde Tk-callback.
+        # Zoek direct; vermijd update_idletasks() voordat de zoekstap start.
         try:
             self._load_derived_candidates(selected)
         except Exception as error:
@@ -1339,7 +1344,10 @@ class App:
             exportselection=False, font=("Segoe UI", 9), justify="center"
         )
         filename_field.insert(0, media.path.name)
-        filename_field.configure(state="readonly", cursor="xterm")
+        filename_field.configure(state="normal", cursor="xterm")
+        filename_field.bind("<KeyPress>", self._protect_filename_entry)
+        filename_field.bind("<Control-a>", lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1])
+        filename_field.bind("<Control-c>", self.copy_text_selection)
         filename_field.pack(fill="x", pady=(5, 2))
         filename_field.bind(
             "<Control-a>",
