@@ -5,6 +5,8 @@ import os
 import re
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor
+import traceback
 import subprocess
 import sys
 import urllib.parse
@@ -170,6 +172,8 @@ class App:
         root.title("MediaVerkenner")
         root.geometry("1440x900")
         root.minsize(1000, 650)
+        self._configure_styles()
+        self.root.report_callback_exception = self._handle_callback_exception
 
         self.folder: Path | None = None
         self.active_folder: Path | None = None
@@ -196,6 +200,10 @@ class App:
         self.tree_paths: dict[str, Path] = {}
         self.scan_queue = queue.Queue()
         self.gallery_thumb_queue = queue.Queue()
+        # Beperk parallelle thumbnail-decodering: geen duizenden threads meer
+        # bij grote mappen. Dit voorkomt piekbelasting en geheugenuitputting.
+        self.thumbnail_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MediaThumb")
+        self.thumbnail_jobs = 0
         self.gallery_generation = 0
         self.gallery_thumb_cache = {}
         self.gallery_thumb_labels = {}
@@ -204,6 +212,43 @@ class App:
         self.expand_queue = []
         self.render_generation = 0
         self.build_ui()
+
+    def _configure_styles(self):
+        """Consistente, rustige blauwe Windows-opmaak in de Android-huiskleur."""
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        blue = "#0F457A"
+        blue_light = "#E1EDFA"
+        blue_pale = "#EFF5FB"
+        style.configure(".", font=("Segoe UI", 9), foreground="#243447")
+        style.configure("TFrame", background="#F4F7FB")
+        style.configure("TLabel", background="#F4F7FB", foreground="#243447")
+        style.configure("TLabelframe", background="#F4F7FB", bordercolor="#C8D5E3")
+        style.configure("TLabelframe.Label", background="#F4F7FB", foreground=blue, font=("Segoe UI", 9, "bold"))
+        style.configure("TButton", padding=(10, 5), font=("Segoe UI", 9))
+        style.map("TButton", foreground=[("active", blue)], background=[("active", blue_light)])
+        style.configure("TEntry", padding=(5, 4), fieldbackground="#FFFFFF")
+        style.configure("TCombobox", padding=(5, 3), fieldbackground="#FFFFFF")
+        style.configure("Treeview", rowheight=25, background="#FFFFFF", fieldbackground="#FFFFFF", foreground="#243447", bordercolor="#D6E0EA")
+        style.configure("Treeview.Heading", background=blue, foreground="#FFFFFF", font=("Segoe UI", 9, "bold"), padding=(7, 6))
+        style.map("Treeview", background=[("selected", blue_light)], foreground=[("selected", blue)])
+        style.configure("TCheckbutton", background="#F4F7FB", foreground="#243447")
+        style.map("TCheckbutton", foreground=[("active", blue)])
+        self.root.configure(background="#F4F7FB")
+
+    def _handle_callback_exception(self, exc_type, exc_value, exc_traceback):
+        """Vang UI-callbackfouten op zodat de applicatie niet stilzwijgend verdwijnt."""
+        details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        try:
+            log_path = Path.home() / "MediaVerkenner-fout.log"
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write("\n--- UI-fout ---\n" + details)
+            self.status.set(f"Er is een fout opgetreden. Details staan in {log_path}")
+        except Exception:
+            pass
 
     def copy_text_selection(self, event=None):
         """Kopieer de met de muis of toetsen geselecteerde bestandsnaam."""
@@ -225,11 +270,45 @@ class App:
 
     def copy_filename_entry(self, _event=None):
         value = self.filename_entry.get()
+        try:
+            start = self.filename_entry.index("sel.first")
+            end = self.filename_entry.index("sel.last")
+            value = value[start:end]
+        except tk.TclError:
+            pass
         if value:
             self.root.clipboard_clear()
             self.root.clipboard_append(value)
             self.status.set("Bestandsnaam gekopieerd.")
         return "break"
+
+    def show_entry_context_menu(self, event):
+        self.filename_entry.focus_set()
+        self._popup_entry_menu(event, self.filename_entry)
+
+    def show_generic_entry_context_menu(self, event, field):
+        field.focus_set()
+        self._popup_entry_menu(event, field)
+
+    def _popup_entry_menu(self, event, field):
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Kopieer", command=lambda: self.copy_text_selection_for(field))
+        menu.add_command(label="Alles selecteren", command=lambda: field.selection_range(0, "end"))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def copy_text_selection_for(self, widget):
+        try:
+            start, end = widget.index("sel.first"), widget.index("sel.last")
+            value = widget.get()[start:end]
+        except tk.TclError:
+            value = widget.get()
+        if value:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.status.set("Bestandsnaam gekopieerd.")
 
     @staticmethod
     def _protect_filename_entry(event):
@@ -324,7 +403,10 @@ class App:
         self.filename_entry.bind("<KeyPress>", self._protect_filename_entry)
         self.filename_entry.bind("<Control-a>", lambda event: (self.filename_entry.selection_range(0, "end"), "break")[1])
         self.filename_entry.bind("<Control-c>", self.copy_filename_entry)
-        ttk.Button(filename_bar, text="Kopieer", command=self.copy_filename_entry).pack(side="left", padx=(5, 0))
+        self.filename_context_menu = tk.Menu(self.root, tearoff=0)
+        self.filename_context_menu.add_command(label="Kopieer bestandsnaam", command=self.copy_filename_entry)
+        self.filename_context_menu.add_command(label="Alles selecteren", command=lambda: self.filename_entry.selection_range(0, "end"))
+        self.filename_entry.bind("<Button-3>", self.show_entry_context_menu)
         columns = ("name", "kind", "date", "size", "place")
         self.table = ttk.Treeview(media_list, columns=columns, show="headings", selectmode="browse")
         for column, title, width in [
@@ -992,7 +1074,8 @@ class App:
                 thumb.configure(image=photo, text="", width=160, height=110)
                 thumb.image = photo
             else:
-                threading.Thread(target=self.load_gallery_thumbnail, args=(generation, media.path), name="GalleryThumb-" + str(generation), daemon=True).start()
+                self.thumbnail_jobs += 1
+                self.thumbnail_executor.submit(self.load_gallery_thumbnail, generation, media.path)
         self.layout_gallery()
         self.root.after(100, self.poll_gallery_thumbnails)
 
@@ -1016,6 +1099,7 @@ class App:
                 generation, path, thumbnail = self.gallery_thumb_queue.get_nowait()
             except queue.Empty:
                 break
+            self.thumbnail_jobs = max(0, self.thumbnail_jobs - 1)
             if generation != generation_now or thumbnail is None:
                 continue
             self.gallery_thumb_cache[path] = thumbnail
@@ -1027,7 +1111,7 @@ class App:
                     label.image = photo
                 except Exception:
                     pass
-        if any(t.is_alive() for t in threading.enumerate() if t.name.startswith("GalleryThumb-")):
+        if self.thumbnail_jobs > 0:
             self.root.after(100, self.poll_gallery_thumbnails)
 
     def select_gallery_item(self, media):
@@ -1348,6 +1432,7 @@ class App:
         filename_field.bind("<KeyPress>", self._protect_filename_entry)
         filename_field.bind("<Control-a>", lambda event, field=filename_field: (field.selection_range(0, "end"), "break")[1])
         filename_field.bind("<Control-c>", self.copy_text_selection)
+        filename_field.bind("<Button-3>", lambda event, field=filename_field: self.show_generic_entry_context_menu(event, field))
         filename_field.pack(fill="x", pady=(5, 2))
         filename_field.bind(
             "<Control-a>",
