@@ -994,7 +994,7 @@ class App:
         except (ValueError, IndexError):
             return
         self.clear_detail_panels()
-        self.album_selected = False
+        self.album_context_active = False
         self.set_media_tabs_visible(True)
         self.album_map_path = None
         self.selected = media
