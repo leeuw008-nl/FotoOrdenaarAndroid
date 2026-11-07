@@ -205,6 +205,11 @@ class App:
         self.tree_paths: dict[str, Path] = {}
         self.scan_queue = queue.Queue()
         self.gallery_thumb_queue = queue.Queue()
+        self.preview_queue = queue.Queue()
+        self.preview_generation = 0
+        self.preview_resize_job = None
+        self.preview_requested_size = None
+        self.preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MediaPreview")
         # Beperk parallelle thumbnail-decodering: geen duizenden threads meer
         # bij grote mappen. Dit voorkomt piekbelasting en geheugenuitputting.
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MediaThumb")
@@ -220,6 +225,7 @@ class App:
         # Pijltjestoetsen bedienen Vorige/Volgende wanneer het mediavoorbeeld actief is.
         self.root.bind_all("<Left>", self._keyboard_previous_media, add="+")
         self.root.bind_all("<Right>", self._keyboard_next_media, add="+")
+        self.root.after(80, self.poll_preview_queue)
 
     def _configure_styles(self):
         """Consistente, rustige blauwe Windows-opmaak in de Android-huiskleur."""
@@ -1087,9 +1093,19 @@ class App:
             self.album_tree.see(node_id)
             self.root.after(200, lambda: setattr(self, "highlighting_media_album", False))
 
-    def resize_preview(self, _event=None):
-        if self.selected:
-            self.render_preview()
+    def resize_preview(self, event=None):
+        """Herlaad pas na een echte formaatwijziging; voorkom configure-lussen."""
+        if not self.selected or event is None:
+            return
+        requested = self.preview_requested_size
+        if requested and abs(event.width - requested[0]) < 36 and abs(event.height - requested[1]) < 36:
+            return
+        if self.preview_resize_job is not None:
+            try:
+                self.root.after_cancel(self.preview_resize_job)
+            except tk.TclError:
+                pass
+        self.preview_resize_job = self.root.after(250, self.render_preview)
 
     def gallery_resize(self, event=None):
         if event is not None:
@@ -1209,36 +1225,72 @@ class App:
             index = self.filtered.index(media)
         except ValueError:
             return
-        self.table.selection_set(str(index))
-        self.table.focus(str(index))
-        self.table.see(str(index))
-        self.select()
+        row = str(index)
+        already_selected = self.table.selection() == (row,)
+        self.table.selection_set(row)
+        self.table.focus(row)
+        self.table.see(row)
         self.show_tab("Medium")
+        # Een gewijzigde Treeview-selectie activeert select() via het bestaande
+        # <<TreeviewSelect>>-event. Roep select() alleen zelf aan als de rij al
+        # geselecteerd was; zo wordt dezelfde foto niet tweemaal geladen.
+        if already_selected:
+            self.select()
 
     def render_preview(self):
-
+        """Decodeer foto's/video's buiten de Tk-hoofdthread."""
+        self.preview_resize_job = None
         media = self.selected
         if not media:
             return
+        self.preview_generation += 1
+        generation = self.preview_generation
+        width = max(240, self.preview.winfo_width() - 20)
+        height = max(200, self.preview.winfo_height() - 24)
+        self.preview_requested_size = (width, height)
+        self.preview_photo = None
+        self.preview.configure(image="", text="Voorbeeld laden…")
+        self.preview_executor.submit(
+            self._load_preview_worker, generation, media.path, media.is_video, width, height
+        )
+
+    def _load_preview_worker(self, generation, path, is_video, width, height):
+        image = None
+        error = None
         try:
-            width = max(200, self.preview.winfo_width() - 20)
-            height = max(180, self.preview.winfo_height() - 24)
-            if media.is_video:
-                image = video_frame(media.path, (width, height))
-                if image is None:
-                    self.preview.configure(image="", text="Videovoorbeeld niet beschikbaar\nDubbelklik of kies Openen / afspelen")
-                    self.preview_photo = None
-                    return
+            if is_video:
+                image = video_frame(path, (width, height))
             else:
-                with Image.open(media.path) as source:
+                with Image.open(path) as source:
                     image = ImageOps.exif_transpose(source)
                     image.thumbnail((width, height), Image.Resampling.LANCZOS)
                     image = image.copy()
-            self.preview_photo = ImageTk.PhotoImage(image)
-            self.preview.configure(image=self.preview_photo, text="")
-        except Exception:
-            self.preview.configure(image="", text="Voorbeeld niet beschikbaar")
-            self.preview_photo = None
+        except Exception as exc:
+            error = str(exc)
+        self.preview_queue.put((generation, path, image, error, is_video))
+
+    def poll_preview_queue(self):
+        try:
+            while True:
+                generation, path, image, error, is_video = self.preview_queue.get_nowait()
+                if generation != self.preview_generation or not self.selected or self.selected.path != path:
+                    continue
+                if image is None:
+                    message = (
+                        "Videovoorbeeld niet beschikbaar\\nDubbelklik of kies Openen / afspelen"
+                        if is_video else "Voorbeeld niet beschikbaar"
+                    )
+                    if error:
+                        self.status.set(f"Voorbeeld kon niet worden geladen: {error}")
+                    self.preview.configure(image="", text=message)
+                    self.preview_photo = None
+                    continue
+                self.preview_photo = ImageTk.PhotoImage(image)
+                self.preview.configure(image=self.preview_photo, text="")
+        except queue.Empty:
+            pass
+        if self.root.winfo_exists():
+            self.root.after(80, self.poll_preview_queue)
 
     def clear_map_markers(self):
         if self.map_marker:
@@ -1402,8 +1454,7 @@ class App:
         self.table.selection_set(row)
         self.table.focus(row)
         self.table.see(row)
-        self.select()
-        # Navigatie met pijltjestoetsen of knoppen toont altijd het gekozen medium.
+        # Het bestaande <<TreeviewSelect>>-event voert de selectie precies één keer uit.
         self.show_tab("Medium")
 
     def show_tab(self, name):
